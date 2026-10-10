@@ -23,6 +23,8 @@ pub enum AppError {
     ControlFailed(String),
     /// The requested display identifier is not among the active displays.
     DisplayNotFound(u32),
+    /// The overlay window could not be created or managed.
+    OverlayFailed(String),
 }
 
 impl fmt::Display for AppError {
@@ -59,6 +61,7 @@ impl fmt::Display for AppError {
             AppError::DisplayNotFound(id) => {
                 write!(f, "no active display with identifier {id}")
             }
+            AppError::OverlayFailed(message) => write!(f, "overlay failed: {message}"),
         }
     }
 }

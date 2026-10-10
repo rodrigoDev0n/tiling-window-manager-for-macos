@@ -5,6 +5,7 @@ pub mod geometry;
 pub mod layout;
 pub mod layout_plan;
 pub mod selector;
+pub mod shortcut;
 pub mod window;
 
 pub mod event;

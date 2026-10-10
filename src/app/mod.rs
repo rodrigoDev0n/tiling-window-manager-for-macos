@@ -6,5 +6,6 @@
 pub mod event_processor;
 pub mod layout_executor;
 pub mod layout_planner;
+pub mod overlay;
 pub mod registry;
 pub mod window_eligibility;

@@ -13,10 +13,11 @@ use crate::core::geometry::Rect;
 use crate::core::layout::{self, LayoutConfig, LayoutType, Shortcut};
 use crate::core::layout_plan::{ExecutionReport, PlanError};
 use crate::core::selector::{self, SelectionError, WindowFilter, WindowSelector};
+use crate::core::shortcut;
 use crate::core::window::{ProcessId, WindowId, WindowInfo};
 use crate::error::AppError;
 use crate::platform::macos::accessibility;
-use crate::platform::macos::{control, displays, observers, windows};
+use crate::platform::macos::{control, displays, hotkey, observers, overlay, windows};
 
 /// Executes the command described by `args` (excluding the program name).
 pub fn run(args: &[String]) -> Result<(), AppError> {
@@ -30,6 +31,7 @@ pub fn run(args: &[String]) -> Result<(), AppError> {
         Some("layout") => layout_preview(&args[1..]),
         Some("apply") => apply_layout(&args[1..]),
         Some("watch") => watch(),
+        Some("overlay") => show_overlay(),
         Some("-h" | "--help") | None => {
             print_usage();
             Ok(())
@@ -51,6 +53,7 @@ fn print_usage() {
     println!("  layout          Preview a tiling layout without changing windows.");
     println!("  apply           Apply a tiling layout to windows on a display.");
     println!("  watch           Monitor window events until interrupted (Ctrl+C).");
+    println!("  overlay         Show a translucent shortcut overlay (toggle: Cmd+Opt+/).");
     println!("  -h, --help      Show this help message.");
     println!();
     println!("Selectors (default: --focused):");
@@ -841,8 +844,11 @@ fn format_separator(widths: &[usize]) -> String {
     format!("{}\n", segments.join("  "))
 }
 
-/// Set by the SIGINT handler installed by [`watch`].
-static WATCH_RUNNING: AtomicBool = AtomicBool::new(true);
+/// Set by the SIGINT handler; cleared on Ctrl+C to stop a foreground loop.
+///
+/// Shared by the `watch` and `overlay` commands, which both hold the foreground
+/// until interrupted.
+static FOREGROUND_RUNNING: AtomicBool = AtomicBool::new(true);
 
 /// Runs the foreground event monitor until interrupted with Ctrl+C.
 fn watch() -> Result<(), AppError> {
@@ -850,6 +856,7 @@ fn watch() -> Result<(), AppError> {
         return Err(AppError::PermissionDenied);
     }
 
+    FOREGROUND_RUNNING.store(true, Ordering::SeqCst);
     install_interrupt_handler();
 
     // The manager must live at a stable address for the duration of the run:
@@ -866,7 +873,7 @@ fn watch() -> Result<(), AppError> {
     // Register initial observers and seed the registry from a first snapshot.
     watch_pump(&mut manager, &mut processor);
 
-    while WATCH_RUNNING.load(Ordering::SeqCst) {
+    while FOREGROUND_RUNNING.load(Ordering::SeqCst) {
         observers::run_loop_step(interval);
         watch_pump(&mut manager, &mut processor);
     }
@@ -1032,9 +1039,72 @@ fn format_clock() -> String {
     )
 }
 
+/// Runs the foreground shortcut overlay until interrupted with Ctrl+C.
+fn show_overlay() -> Result<(), AppError> {
+    if !accessibility::is_trusted() {
+        return Err(AppError::PermissionDenied);
+    }
+
+    FOREGROUND_RUNNING.store(true, Ordering::SeqCst);
+    install_interrupt_handler();
+
+    overlay::prepare_application().map_err(map_overlay_error)?;
+
+    let content = shortcut::render_plain(&shortcut::default_shortcuts());
+    let size = app::overlay::overlay_size(&content);
+
+    let active = displays::snapshot();
+    let frame = control::focused_window()
+        .and_then(|window| window.info.bounds)
+        .and_then(displays::work_area_for_window)
+        .or_else(|| display::main_display(&active).map(|display| display.usable))
+        .ok_or_else(|| AppError::OverlayFailed("no active display is available".to_string()))?;
+
+    let window =
+        overlay::OverlayWindow::create(frame, size, &content).map_err(map_overlay_error)?;
+    let mut visibility = app::overlay::OverlayState::new(true);
+    window.show();
+
+    let hotkey_guard = match hotkey::Hotkey::register_toggle() {
+        Ok(guard) => {
+            println!("Overlay shown. Press Cmd+Opt+/ to toggle, Ctrl+C to quit.");
+            Some(guard)
+        }
+        Err(error) => {
+            eprintln!(
+                "warning: global hotkey unavailable ({error}); \
+                 the overlay cannot be toggled with the keyboard"
+            );
+            println!("Overlay shown. Ctrl+C to quit.");
+            None
+        }
+    };
+
+    while FOREGROUND_RUNNING.load(Ordering::SeqCst) {
+        overlay::pump_events(0.1);
+        if hotkey::take_toggle_request() {
+            visibility.toggle();
+            if visibility.is_visible() {
+                window.show();
+            } else {
+                window.hide();
+            }
+        }
+    }
+
+    drop(hotkey_guard);
+    drop(window);
+    println!("Stopped.");
+    Ok(())
+}
+
+fn map_overlay_error(error: overlay::OverlayError) -> AppError {
+    AppError::OverlayFailed(error.to_string())
+}
+
 extern "C" fn handle_sigint(_signal: libc::c_int) {
     // Storing an atomic flag is safe inside a signal handler.
-    WATCH_RUNNING.store(false, Ordering::SeqCst);
+    FOREGROUND_RUNNING.store(false, Ordering::SeqCst);
 }
 
 fn install_interrupt_handler() {

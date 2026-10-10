@@ -4,7 +4,7 @@
 **Priority:** Critical  
 **Dependencies:** SPEC-001, SPEC-002, SPEC-003  
 **Integration:** SPEC-005 — Layout Application  
-**Next:** SPEC-007 — Automatic Tiling
+**Next:** SPEC-007 — Shortcut Overlay Window
 
 > **Revision:** Amendments approved during specification review are folded
 > inline and marked "Amendment". They resolve run-loop ownership (main thread),
