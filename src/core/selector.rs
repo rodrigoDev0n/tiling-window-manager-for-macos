@@ -140,7 +140,9 @@ fn title_contains(window_title: Option<&str>, needle: &str) -> bool {
     window_title.is_some_and(|title| title.to_lowercase().contains(&needle.to_lowercase()))
 }
 
-fn compare_windows(a: &WindowInfo, b: &WindowInfo) -> Ordering {
+/// Deterministic ordering for `WindowInfo` used both by selection and by the
+/// layout planner, so repeated invocations produce the same ordering.
+pub(crate) fn compare_windows(a: &WindowInfo, b: &WindowInfo) -> Ordering {
     a.application
         .cmp(&b.application)
         .then_with(|| title_key(a).cmp(title_key(b)))

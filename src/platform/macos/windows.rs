@@ -6,6 +6,7 @@ use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
 use core_foundation_sys::array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef};
 use core_foundation_sys::base::{CFGetTypeID, CFTypeRef};
+use core_foundation_sys::number::{CFBooleanGetTypeID, CFBooleanGetValue, CFBooleanRef};
 use core_foundation_sys::string::CFStringGetTypeID;
 
 use crate::core::geometry::Rect;
@@ -113,6 +114,19 @@ pub(crate) fn copy_string(element: AXUIElementRef, attribute: &str) -> Option<St
             )
             .to_string(),
         )
+    }
+}
+
+/// Copies a boolean attribute (for example `AXMinimized`).
+pub(crate) fn copy_bool(element: AXUIElementRef, attribute: &str) -> Option<bool> {
+    let guard = copy_attribute(element, attribute)?;
+
+    // SAFETY: the value is checked to be a CFBoolean before unwrapping.
+    unsafe {
+        if CFGetTypeID(guard.as_ref()) != CFBooleanGetTypeID() {
+            return None;
+        }
+        Some(CFBooleanGetValue(guard.as_ref() as CFBooleanRef))
     }
 }
 

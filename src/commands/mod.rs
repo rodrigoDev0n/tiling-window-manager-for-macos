@@ -3,9 +3,11 @@
 //! Commands only decide *what* to do; the actual native work is delegated to
 //! the `platform` layer.
 
+use crate::app;
 use crate::core::display::{self, Display, DisplayId};
 use crate::core::geometry::Rect;
 use crate::core::layout::{self, LayoutConfig, LayoutType, Shortcut};
+use crate::core::layout_plan::{ExecutionReport, PlanError};
 use crate::core::selector::{self, SelectionError, WindowFilter, WindowSelector};
 use crate::core::window::{ProcessId, WindowId, WindowInfo};
 use crate::error::AppError;
@@ -22,6 +24,7 @@ pub fn run(args: &[String]) -> Result<(), AppError> {
         Some("displays") => list_displays(),
         Some("display-info") => display_info(args.get(1).map(String::as_str)),
         Some("layout") => layout_preview(&args[1..]),
+        Some("apply") => apply_layout(&args[1..]),
         Some("-h" | "--help") | None => {
             print_usage();
             Ok(())
@@ -41,6 +44,7 @@ fn print_usage() {
     println!("  displays        List active displays and their geometry.");
     println!("  display-info    Show detailed geometry for one display.");
     println!("  layout          Preview a tiling layout without changing windows.");
+    println!("  apply           Apply a tiling layout to windows on a display.");
     println!("  -h, --help      Show this help message.");
     println!();
     println!("Selectors (default: --focused):");
@@ -62,6 +66,9 @@ fn print_usage() {
     println!("  --display <id>    Only windows on this display (default: main).");
     println!("  --outer-gap <f64>  --inner-gap <f64>");
     println!("  --ratio <f64>      --master-count <usize>");
+    println!();
+    println!("apply usage:");
+    println!("  apply <master-stack|columns|rows|monocle> [--display <id>] [--dry-run]");
 }
 
 fn permissions() -> Result<(), AppError> {
@@ -260,6 +267,167 @@ fn contains_point(rect: Rect, x: f64, y: f64) -> bool {
 
 fn map_layout_error(error: layout::LayoutError) -> AppError {
     AppError::InvalidArgument(error.to_string())
+}
+
+/// Native backend that moves/resizes real windows through `control::set_bounds`.
+struct NativeBackend;
+
+impl app::layout_executor::LayoutBackend<control::LayoutWindow> for NativeBackend {
+    fn set_bounds(&self, window: &control::LayoutWindow, rect: Rect) -> Result<Rect, String> {
+        control::set_bounds(&window.handle, rect).map_err(|error| error.to_string())
+    }
+}
+
+fn apply_layout(args: &[String]) -> Result<(), AppError> {
+    if !accessibility::is_trusted() {
+        return Err(AppError::PermissionDenied);
+    }
+
+    let options = parse_apply_args(args)?;
+
+    let active = displays::snapshot();
+    let selected = match options.display.as_deref() {
+        Some(raw) => {
+            let id = DisplayId::parse(raw)
+                .map_err(|error| AppError::InvalidArgument(error.to_string()))?;
+            display::find(&active, id).ok_or(AppError::DisplayNotFound(id.0))?
+        }
+        None => display::main_display(&active).ok_or(AppError::DisplayNotFound(0))?,
+    };
+
+    let config = LayoutConfig {
+        layout: options.layout,
+        ..LayoutConfig::default()
+    };
+
+    let windows = control::discover_layout_windows();
+    let plan = app::layout_planner::build_plan(&active, windows, selected.id, config)
+        .map_err(map_plan_error)?;
+
+    if options.dry_run {
+        let report = app::layout_executor::execute(
+            plan,
+            &NativeBackend,
+            app::layout_executor::ExecutionMode::DryRun,
+        );
+        print!("{}", render_execution_report(&report));
+        println!("Read-only preview: no windows changed.");
+        return Ok(());
+    }
+
+    let report = app::layout_executor::execute(
+        plan,
+        &NativeBackend,
+        app::layout_executor::ExecutionMode::Apply,
+    );
+    print!("{}", render_execution_report(&report));
+    Ok(())
+}
+
+/// Parsed options for the `apply` command.
+#[derive(Debug)]
+struct ApplyOptions {
+    layout: LayoutType,
+    display: Option<String>,
+    dry_run: bool,
+}
+
+fn parse_apply_args(args: &[String]) -> Result<ApplyOptions, AppError> {
+    let layout_name = args.first().ok_or_else(|| {
+        AppError::InvalidArgument(
+            "apply requires a layout name (master-stack, columns, rows or monocle)".to_string(),
+        )
+    })?;
+    let layout = LayoutType::parse(layout_name).ok_or_else(|| {
+        AppError::InvalidArgument(format!(
+            "invalid apply layout: {layout_name} (expected master-stack, columns, rows or monocle)"
+        ))
+    })?;
+
+    let mut display = None;
+    let mut dry_run = false;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--display" => {
+                display = Some(flag_value(args, index, "--display")?.to_string());
+                index += 2;
+            }
+            "--dry-run" => {
+                dry_run = true;
+                index += 1;
+            }
+            other => {
+                return Err(AppError::InvalidArgument(format!(
+                    "unexpected argument: {other}"
+                )));
+            }
+        }
+    }
+
+    Ok(ApplyOptions {
+        layout,
+        display,
+        dry_run,
+    })
+}
+
+fn map_plan_error(error: PlanError) -> AppError {
+    match error {
+        PlanError::DisplayNotFound(id) => AppError::DisplayNotFound(id.0),
+        PlanError::Layout(error) => AppError::InvalidArgument(error.to_string()),
+    }
+}
+fn render_execution_report(report: &ExecutionReport) -> String {
+    let mut output = String::new();
+    output.push_str(&format!(
+        "Layout: {} | Display: {}\n",
+        report.layout, report.display_id
+    ));
+    output.push_str(&format!(
+        "Discovered: {} | Eligible: {} | Applied: {} | Constrained: {} | Failed: {} | Skipped: {}",
+        report.discovered,
+        report.eligible,
+        report.applied,
+        report.constrained,
+        report.failed,
+        report.skipped
+    ));
+    if report.planned > 0 {
+        output.push_str(&format!(" | Planned: {}", report.planned));
+    }
+    output.push('\n');
+
+    for result in &report.results {
+        output.push_str(&format!(
+            "  {} [{}] ({}): {} -> {}\n",
+            result.application,
+            result.title.as_deref().unwrap_or("untitled"),
+            result.state,
+            format_rect(result.original),
+            format_rect(result.target),
+        ));
+    }
+
+    if !report.exclusions.is_empty() {
+        output.push_str("Excluded:\n");
+        for exclusion in &report.exclusions {
+            output.push_str(&format!(
+                "  {} ({}): {}\n",
+                exclusion.title.as_deref().unwrap_or("untitled"),
+                exclusion.application,
+                exclusion.reason
+            ));
+        }
+    }
+    output
+}
+
+fn format_rect(rect: Rect) -> String {
+    format!(
+        "x={:.0} y={:.0} w={:.0} h={:.0}",
+        rect.origin.x, rect.origin.y, rect.size.width, rect.size.height
+    )
 }
 
 /// A geometry request supplied on the command line.
@@ -806,5 +974,65 @@ mod tests {
         ]))
         .expect_err("should fail");
         assert!(matches!(error, AppError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn apply_requires_a_layout_name() {
+        let error = parse_apply_args(&args(&[])).expect_err("should fail");
+        assert!(matches!(error, AppError::InvalidArgument(_)));
+    }
+
+    #[test]
+    fn apply_parses_layout_with_optional_flags() {
+        let options =
+            parse_apply_args(&args(&["columns", "--display", "42", "--dry-run"])).expect("parse");
+        assert_eq!(options.layout, LayoutType::Columns);
+        assert_eq!(options.display.as_deref(), Some("42"));
+        assert!(options.dry_run);
+    }
+
+    #[test]
+    fn apply_rejects_unknown_layout_and_flags() {
+        assert!(matches!(
+            parse_apply_args(&args(&["bsp"])),
+            Err(AppError::InvalidArgument(_))
+        ));
+        assert!(matches!(
+            parse_apply_args(&args(&["rows", "--bogus"])),
+            Err(AppError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn execution_report_renders_counts_and_states() {
+        use crate::core::display::DisplayId;
+        use crate::core::layout_plan::{WindowResult, WindowResultState};
+
+        let report = ExecutionReport {
+            display_id: DisplayId(1),
+            layout: LayoutType::Columns,
+            discovered: 3,
+            eligible: 1,
+            applied: 1,
+            constrained: 0,
+            failed: 0,
+            skipped: 0,
+            planned: 0,
+            results: vec![WindowResult {
+                window_id: WindowId(0),
+                application: "Terminal".to_string(),
+                title: None,
+                original: Rect::new(5.0, 5.0, 100.0, 100.0),
+                target: Rect::new(0.0, 25.0, 1440.0, 875.0),
+                state: WindowResultState::Applied(Rect::new(0.0, 25.0, 1440.0, 875.0)),
+            }],
+            exclusions: Vec::new(),
+        };
+
+        let rendered = render_execution_report(&report);
+        assert!(rendered.contains("Applied: 1"));
+        assert!(rendered.contains("Terminal"));
+        assert!(rendered.contains("applied"));
+        assert!(rendered.contains("1440"));
     }
 }

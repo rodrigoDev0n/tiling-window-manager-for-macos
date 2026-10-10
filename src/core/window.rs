@@ -29,6 +29,20 @@ pub struct WindowInfo {
     pub bounds: Option<Rect>,
 }
 
+/// Native classification of a window used for eligibility decisions.
+///
+/// The values are plain tokens so the `core` layer stays independent of macOS;
+/// the platform layer maps Accessibility attributes onto them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowClassification {
+    /// The accessibility role, for example `AXWindow` for standard windows.
+    pub role: Option<String>,
+    /// Whether the window is minimized, when the attribute is exposed.
+    pub minimized: Option<bool>,
+    /// Whether the window is in native fullscreen, when the attribute is exposed.
+    pub fullscreen: Option<bool>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

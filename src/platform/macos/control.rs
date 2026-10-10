@@ -16,7 +16,8 @@ use core_foundation_sys::array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArra
 use core_foundation_sys::base::{CFRelease, CFRetain, CFTypeRef};
 
 use crate::core::geometry::Rect;
-use crate::core::window::{ProcessId, WindowInfo};
+use crate::core::layout_plan::WindowRef;
+use crate::core::window::{ProcessId, WindowClassification, WindowInfo};
 use crate::platform::macos::accessibility::{
     self, AX_ERROR_SUCCESS, AXError, AXUIElementRef, Boolean, CGPoint, CGSize, CfGuard,
     K_AX_VALUE_CG_POINT_TYPE, K_AX_VALUE_CG_SIZE_TYPE,
@@ -54,6 +55,26 @@ impl Drop for WindowHandle {
 pub struct ManagedWindow {
     pub info: WindowInfo,
     pub handle: WindowHandle,
+}
+
+/// A discovered window with its eligibility classification and control handle.
+///
+/// Used by the layout pipeline (SPEC-005): classification drives eligibility,
+/// the handle lets the executor apply targeted geometry.
+pub struct LayoutWindow {
+    pub info: WindowInfo,
+    pub classification: WindowClassification,
+    pub handle: WindowHandle,
+}
+
+impl WindowRef for LayoutWindow {
+    fn info(&self) -> &WindowInfo {
+        &self.info
+    }
+
+    fn classification(&self) -> &WindowClassification {
+        &self.classification
+    }
 }
 
 /// Reasons a native window operation failed.
@@ -140,6 +161,14 @@ pub fn discover_managed_windows() -> Vec<ManagedWindow> {
     applications::running_applications()
         .into_iter()
         .flat_map(|app| discover_application_windows(app.pid, &app.name))
+        .collect()
+}
+
+/// Discovers windows together with their eligibility classification and handle.
+pub fn discover_layout_windows() -> Vec<LayoutWindow> {
+    applications::running_applications()
+        .into_iter()
+        .flat_map(|app| discover_application_layout_windows(app.pid, &app.name))
         .collect()
 }
 
@@ -240,19 +269,34 @@ pub fn focus_window(handle: &WindowHandle, pid: ProcessId) -> Result<(), Control
 }
 
 fn discover_application_windows(pid: ProcessId, application: &str) -> Vec<ManagedWindow> {
-    let mut managed = Vec::new();
+    enumerate_window_elements(pid, |element| ManagedWindow {
+        info: read_window_info(element, pid, application),
+        handle: WindowHandle::retain(element),
+    })
+}
+
+fn discover_application_layout_windows(pid: ProcessId, application: &str) -> Vec<LayoutWindow> {
+    enumerate_window_elements(pid, |element| LayoutWindow {
+        info: read_window_info(element, pid, application),
+        classification: read_classification(element),
+        handle: WindowHandle::retain(element),
+    })
+}
+
+fn enumerate_window_elements<T>(pid: ProcessId, build: impl Fn(AXUIElementRef) -> T) -> Vec<T> {
+    let mut collected = Vec::new();
 
     // SAFETY: `pid` comes from NSWorkspace; the returned element is owned.
     let application_element = unsafe { accessibility::AXUIElementCreateApplication(pid.0) };
     if application_element.is_null() {
-        return managed;
+        return collected;
     }
     let _application_guard = unsafe { CfGuard::new(application_element as CFTypeRef) };
 
     let Some(array_guard) =
         windows::copy_attribute(application_element, accessibility::AX_WINDOWS_ATTRIBUTE)
     else {
-        return managed;
+        return collected;
     };
 
     let array = array_guard.as_ref() as CFArrayRef;
@@ -267,13 +311,10 @@ fn discover_application_windows(pid: ProcessId, application: &str) -> Vec<Manage
             continue;
         }
 
-        managed.push(ManagedWindow {
-            info: read_window_info(element, pid, application),
-            handle: WindowHandle::retain(element),
-        });
+        collected.push(build(element));
     }
 
-    managed
+    collected
 }
 
 fn read_window_info(element: AXUIElementRef, pid: ProcessId, application: &str) -> WindowInfo {
@@ -283,6 +324,14 @@ fn read_window_info(element: AXUIElementRef, pid: ProcessId, application: &str) 
         title: windows::copy_string(element, accessibility::AX_TITLE_ATTRIBUTE)
             .filter(|title| !title.is_empty()),
         bounds: windows::window_bounds(element),
+    }
+}
+
+fn read_classification(element: AXUIElementRef) -> WindowClassification {
+    WindowClassification {
+        role: windows::copy_string(element, accessibility::AX_ROLE_ATTRIBUTE),
+        minimized: windows::copy_bool(element, accessibility::AX_MINIMIZED_ATTRIBUTE),
+        fullscreen: windows::copy_bool(element, accessibility::AX_FULL_SCREEN_ATTRIBUTE),
     }
 }
 

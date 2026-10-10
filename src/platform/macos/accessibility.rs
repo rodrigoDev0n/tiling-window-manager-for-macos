@@ -104,6 +104,12 @@ pub const AX_POSITION_ATTRIBUTE: &str = "AXPosition";
 pub const AX_SIZE_ATTRIBUTE: &str = "AXSize";
 /// Value of the `kAXFocusedWindowAttribute` attribute constant.
 pub const AX_FOCUSED_WINDOW_ATTRIBUTE: &str = "AXFocusedWindow";
+/// Value of the `kAXRoleAttribute` attribute constant.
+pub const AX_ROLE_ATTRIBUTE: &str = "AXRole";
+/// Value of the `kAXMinimizedAttribute` attribute constant.
+pub const AX_MINIMIZED_ATTRIBUTE: &str = "AXMinimized";
+/// Value of the `kAXFullScreenAttribute` attribute constant.
+pub const AX_FULL_SCREEN_ATTRIBUTE: &str = "AXFullScreen";
 /// Value of the `kAXRaiseAction` action constant.
 pub const AX_RAISE_ACTION: &str = "AXRaise";
 

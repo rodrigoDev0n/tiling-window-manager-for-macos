@@ -1,3 +1,4 @@
+mod app;
 mod commands;
 mod core;
 mod error;
