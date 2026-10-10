@@ -12,6 +12,20 @@ pub struct RunningApplication {
     pub name: String,
 }
 
+/// Returns the frontmost application, if any.
+pub fn frontmost_application() -> Option<RunningApplication> {
+    autoreleasepool(|_| {
+        let workspace = NSWorkspace::sharedWorkspace();
+        let app = workspace.frontmostApplication()?;
+        let pid = ProcessId(app.processIdentifier());
+        let name = app
+            .localizedName()
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| format!("PID {}", pid.0));
+        Some(RunningApplication { pid, name })
+    })
+}
+
 /// Enumerates running applications that present a regular user interface.
 ///
 /// Background agents, daemons, and this process itself are excluded so that the

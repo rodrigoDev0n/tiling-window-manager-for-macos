@@ -5,33 +5,16 @@ use std::os::raw::c_void;
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
 use core_foundation_sys::array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef};
-use core_foundation_sys::base::{CFGetTypeID, CFRelease, CFTypeRef};
+use core_foundation_sys::base::{CFGetTypeID, CFTypeRef};
 use core_foundation_sys::string::CFStringGetTypeID;
 
 use crate::core::geometry::Rect;
 use crate::core::window::{ProcessId, WindowInfo};
 use crate::platform::macos::accessibility::{
-    self, AX_ERROR_SUCCESS, AXUIElementRef, AXValueRef, CGPoint, CGSize, K_AX_VALUE_CG_POINT_TYPE,
-    K_AX_VALUE_CG_SIZE_TYPE,
+    self, AX_ERROR_SUCCESS, AXUIElementRef, AXValueRef, CGPoint, CGSize, CfGuard,
+    K_AX_VALUE_CG_POINT_TYPE, K_AX_VALUE_CG_SIZE_TYPE,
 };
 use crate::platform::macos::applications;
-
-/// Owns a `+1` Core Foundation reference and releases it on drop.
-struct CFGuard(CFTypeRef);
-
-impl CFGuard {
-    fn as_ref(&self) -> CFTypeRef {
-        self.0
-    }
-}
-
-impl Drop for CFGuard {
-    fn drop(&mut self) {
-        // SAFETY: guards are only constructed around references obtained with
-        // the Create/Copy rule (owned `+1`).
-        unsafe { CFRelease(self.0) };
-    }
-}
 
 /// Discovers the windows of every accessible running application.
 pub fn discover_windows() -> Vec<WindowInfo> {
@@ -49,7 +32,7 @@ fn discover_application_windows(pid: ProcessId, application: &str) -> Vec<Window
     if application_element.is_null() {
         return windows;
     }
-    let _application_guard = CFGuard(application_element as CFTypeRef);
+    let _application_guard = unsafe { CfGuard::new(application_element as CFTypeRef) };
 
     let Some(array_guard) =
         copy_attribute(application_element, accessibility::AX_WINDOWS_ATTRIBUTE)
@@ -83,7 +66,7 @@ fn discover_application_windows(pid: ProcessId, application: &str) -> Vec<Window
     windows
 }
 
-fn window_bounds(element: AXUIElementRef) -> Option<Rect> {
+pub(crate) fn window_bounds(element: AXUIElementRef) -> Option<Rect> {
     let position = copy_point(element, accessibility::AX_POSITION_ATTRIBUTE)?;
     let size = copy_size(element, accessibility::AX_SIZE_ATTRIBUTE)?;
 
@@ -92,7 +75,7 @@ fn window_bounds(element: AXUIElementRef) -> Option<Rect> {
 }
 
 /// Copies an attribute, returning an owned guard or `None` when unsupported.
-fn copy_attribute(element: AXUIElementRef, attribute: &str) -> Option<CFGuard> {
+pub(crate) fn copy_attribute(element: AXUIElementRef, attribute: &str) -> Option<CfGuard> {
     let attribute = CFString::new(attribute);
     let mut value: CFTypeRef = std::ptr::null();
 
@@ -108,13 +91,14 @@ fn copy_attribute(element: AXUIElementRef, attribute: &str) -> Option<CFGuard> {
     };
 
     if error == AX_ERROR_SUCCESS && !value.is_null() {
-        Some(CFGuard(value))
+        // SAFETY: on success the value follows the Create rule (owned `+1`).
+        Some(unsafe { CfGuard::new(value) })
     } else {
         None
     }
 }
 
-fn copy_string(element: AXUIElementRef, attribute: &str) -> Option<String> {
+pub(crate) fn copy_string(element: AXUIElementRef, attribute: &str) -> Option<String> {
     let guard = copy_attribute(element, attribute)?;
 
     // SAFETY: the value is checked to be a CFString before wrapping. The guard
@@ -132,7 +116,7 @@ fn copy_string(element: AXUIElementRef, attribute: &str) -> Option<String> {
     }
 }
 
-fn copy_point(element: AXUIElementRef, attribute: &str) -> Option<CGPoint> {
+pub(crate) fn copy_point(element: AXUIElementRef, attribute: &str) -> Option<CGPoint> {
     let guard = copy_ax_value(element, attribute)?;
     let mut point = CGPoint::default();
 
@@ -148,7 +132,7 @@ fn copy_point(element: AXUIElementRef, attribute: &str) -> Option<CGPoint> {
     (success != 0).then_some(point)
 }
 
-fn copy_size(element: AXUIElementRef, attribute: &str) -> Option<CGSize> {
+pub(crate) fn copy_size(element: AXUIElementRef, attribute: &str) -> Option<CGSize> {
     let guard = copy_ax_value(element, attribute)?;
     let mut size = CGSize::default();
 
@@ -164,7 +148,7 @@ fn copy_size(element: AXUIElementRef, attribute: &str) -> Option<CGSize> {
     (success != 0).then_some(size)
 }
 
-fn copy_ax_value(element: AXUIElementRef, attribute: &str) -> Option<CFGuard> {
+fn copy_ax_value(element: AXUIElementRef, attribute: &str) -> Option<CfGuard> {
     let guard = copy_attribute(element, attribute)?;
     // SAFETY: type id comparison on a live Core Foundation object.
     let is_ax_value = unsafe { CFGetTypeID(guard.as_ref()) == accessibility::AXValueGetTypeID() };

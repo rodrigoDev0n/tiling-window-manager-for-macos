@@ -7,6 +7,7 @@
 
 use std::os::raw::{c_uchar, c_void};
 
+use core_foundation_sys::base::{CFRelease, CFTypeRef};
 use core_foundation_sys::string::CFStringRef;
 
 /// Core Foundation `Boolean`.
@@ -20,6 +21,20 @@ pub type AXError = i32;
 
 /// `kAXErrorSuccess`.
 pub const AX_ERROR_SUCCESS: AXError = 0;
+/// `kAXErrorIllegalArgument`.
+pub const AX_ERROR_ILLEGAL_ARGUMENT: AXError = -25201;
+/// `kAXErrorInvalidUIElement`.
+pub const AX_ERROR_INVALID_UI_ELEMENT: AXError = -25202;
+/// `kAXErrorCannotComplete`.
+pub const AX_ERROR_CANNOT_COMPLETE: AXError = -25204;
+/// `kAXErrorAttributeUnsupported`.
+pub const AX_ERROR_ATTRIBUTE_UNSUPPORTED: AXError = -25205;
+/// `kAXErrorActionUnsupported`.
+pub const AX_ERROR_ACTION_UNSUPPORTED: AXError = -25206;
+/// `kAXErrorNotImplemented`.
+pub const AX_ERROR_NOT_IMPLEMENTED: AXError = -25208;
+/// `kAXErrorAPIDisabled`.
+pub const AX_ERROR_API_DISABLED: AXError = -25211;
 
 /// `kAXValueTypeCGPoint`.
 pub const K_AX_VALUE_CG_POINT_TYPE: i32 = 1;
@@ -54,8 +69,24 @@ unsafe extern "C" {
         attribute: CFStringRef,
         value: *mut core_foundation_sys::base::CFTypeRef,
     ) -> AXError;
+    /// Sets the value of an attribute (returns `kAXErrorSuccess` on success).
+    pub fn AXUIElementSetAttributeValue(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        value: CFTypeRef,
+    ) -> AXError;
+    /// Reports whether an attribute may be written for the given element.
+    pub fn AXUIElementIsAttributeSettable(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        settable: *mut Boolean,
+    ) -> AXError;
+    /// Performs the named action on an accessibility element.
+    pub fn AXUIElementPerformAction(element: AXUIElementRef, action: CFStringRef) -> AXError;
     /// Extracts a typed value from an `AXValue` element.
     pub fn AXValueGetValue(value: AXValueRef, the_type: i32, out_value: *mut c_void) -> Boolean;
+    /// Boxes a raw geometry value into an `AXValue` (returned with the Create rule).
+    pub fn AXValueCreate(the_type: i32, value: *const c_void) -> AXValueRef;
     /// Returns the Core Foundation type id for `AXValue`.
     pub fn AXValueGetTypeID() -> core_foundation_sys::base::CFTypeID;
 }
@@ -71,6 +102,36 @@ pub const AX_TITLE_ATTRIBUTE: &str = "AXTitle";
 pub const AX_POSITION_ATTRIBUTE: &str = "AXPosition";
 /// Value of the `kAXSizeAttribute` attribute constant.
 pub const AX_SIZE_ATTRIBUTE: &str = "AXSize";
+/// Value of the `kAXFocusedWindowAttribute` attribute constant.
+pub const AX_FOCUSED_WINDOW_ATTRIBUTE: &str = "AXFocusedWindow";
+/// Value of the `kAXRaiseAction` action constant.
+pub const AX_RAISE_ACTION: &str = "AXRaise";
+
+/// Owns a `+1` Core Foundation reference and releases it on drop.
+pub struct CfGuard(CFTypeRef);
+
+impl CfGuard {
+    /// Wraps a reference obtained under the Create/Copy rule (owned `+1`).
+    ///
+    /// # Safety
+    ///
+    /// `reference` must be a valid, owned (`+1`) Core Foundation reference.
+    pub unsafe fn new(reference: CFTypeRef) -> Self {
+        Self(reference)
+    }
+
+    /// Returns the wrapped reference as a borrowed pointer.
+    pub fn as_ref(&self) -> CFTypeRef {
+        self.0
+    }
+}
+
+impl Drop for CfGuard {
+    fn drop(&mut self) {
+        // SAFETY: guards are only constructed around owned references.
+        unsafe { CFRelease(self.0) };
+    }
+}
 
 /// Returns whether this process currently holds Accessibility authorization.
 ///
