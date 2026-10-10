@@ -1,6 +1,7 @@
 mod commands;
 mod core;
 mod error;
+mod layouts;
 mod platform;
 
 use std::process::ExitCode;

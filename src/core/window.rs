@@ -6,6 +6,16 @@ use crate::core::geometry::Rect;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProcessId(pub i32);
 
+/// An opaque, caller-assigned identifier for a single window within one layout
+/// calculation.
+///
+/// The layout engine never dereferences this value, so it can wrap any
+/// caller-provided unique handle (for example an index assigned during
+/// discovery). Identifiers must be unique within a calculation and must not be
+/// persisted across process executions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WindowId(pub u64);
+
 /// Metadata describing a discoverable application window.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowInfo {
@@ -33,5 +43,11 @@ mod tests {
         };
         assert_eq!(window.pid, ProcessId(4321));
         assert!(window.bounds.is_none());
+    }
+
+    #[test]
+    fn window_id_carries_an_opaque_value() {
+        assert_eq!(WindowId(7), WindowId(7));
+        assert_ne!(WindowId(7), WindowId(8));
     }
 }

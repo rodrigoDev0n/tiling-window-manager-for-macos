@@ -5,9 +5,9 @@
 
 use crate::core::display::{self, Display, DisplayId};
 use crate::core::geometry::Rect;
-use crate::core::layout::{self, Shortcut};
+use crate::core::layout::{self, LayoutConfig, LayoutType, Shortcut};
 use crate::core::selector::{self, SelectionError, WindowFilter, WindowSelector};
-use crate::core::window::{ProcessId, WindowInfo};
+use crate::core::window::{ProcessId, WindowId, WindowInfo};
 use crate::error::AppError;
 use crate::platform::macos::accessibility;
 use crate::platform::macos::{control, displays, windows};
@@ -21,6 +21,7 @@ pub fn run(args: &[String]) -> Result<(), AppError> {
         Some("focus") => focus_window(&args[1..]),
         Some("displays") => list_displays(),
         Some("display-info") => display_info(args.get(1).map(String::as_str)),
+        Some("layout") => layout_preview(&args[1..]),
         Some("-h" | "--help") | None => {
             print_usage();
             Ok(())
@@ -39,6 +40,7 @@ fn print_usage() {
     println!("  focus           Focus (raise) a window.");
     println!("  displays        List active displays and their geometry.");
     println!("  display-info    Show detailed geometry for one display.");
+    println!("  layout          Preview a tiling layout without changing windows.");
     println!("  -h, --help      Show this help message.");
     println!();
     println!("Selectors (default: --focused):");
@@ -54,6 +56,12 @@ fn print_usage() {
     println!();
     println!("display-info argument:");
     println!("  <display-id>    CGDirectDisplayID in decimal, or 0x-prefixed hex.");
+    println!();
+    println!("layout options:");
+    println!("  --layout <masterstack|columns|rows|monocle>");
+    println!("  --display <id>    Only windows on this display (default: main).");
+    println!("  --outer-gap <f64>  --inner-gap <f64>");
+    println!("  --ratio <f64>      --master-count <usize>");
 }
 
 fn permissions() -> Result<(), AppError> {
@@ -112,6 +120,146 @@ fn display_info(id: Option<&str>) -> Result<(), AppError> {
     let display = display::find(&active, parsed).ok_or(AppError::DisplayNotFound(parsed.0))?;
     print!("{}", render_display_detail(display));
     Ok(())
+}
+
+/// Command-line overrides for a layout preview.
+#[derive(Debug, Default)]
+struct LayoutOptions {
+    layout: Option<LayoutType>,
+    display: Option<String>,
+    outer_gap: Option<f64>,
+    inner_gap: Option<f64>,
+    ratio: Option<f64>,
+    master_count: Option<usize>,
+}
+
+fn layout_preview(args: &[String]) -> Result<(), AppError> {
+    if !accessibility::is_trusted() {
+        return Err(AppError::PermissionDenied);
+    }
+
+    let options = parse_layout_args(args)?;
+
+    let active = displays::snapshot();
+    let display = match options.display.as_deref() {
+        Some(raw) => {
+            let id = DisplayId::parse(raw)
+                .map_err(|error| AppError::InvalidArgument(error.to_string()))?;
+            display::find(&active, id).ok_or(AppError::DisplayNotFound(id.0))?
+        }
+        None => display::main_display(&active).ok_or(AppError::DisplayNotFound(0))?,
+    };
+
+    let defaults = LayoutConfig::default();
+    let config = LayoutConfig {
+        layout: options.layout.unwrap_or(defaults.layout),
+        outer_gap: options.outer_gap.unwrap_or(defaults.outer_gap),
+        inner_gap: options.inner_gap.unwrap_or(defaults.inner_gap),
+        master_ratio: options.ratio.unwrap_or(defaults.master_ratio),
+        master_count: options.master_count.unwrap_or(defaults.master_count),
+    };
+
+    let managed = control::discover_managed_windows();
+    let mut window_ids = Vec::with_capacity(managed.len());
+    for (index, window) in managed.iter().enumerate() {
+        if let Some(bounds) = window.info.bounds {
+            let centre_x = bounds.origin.x + bounds.size.width / 2.0;
+            let centre_y = bounds.origin.y + bounds.size.height / 2.0;
+            if contains_point(display.usable, centre_x, centre_y) {
+                window_ids.push(WindowId(index as u64));
+            }
+        }
+    }
+
+    let result =
+        layout::calculate(&window_ids, display.usable, config).map_err(map_layout_error)?;
+
+    if result.windows.is_empty() {
+        println!("No accessible windows on display {}.", display.id);
+        return Ok(());
+    }
+
+    let headers = ["#", "X", "Y", "WIDTH", "HEIGHT"];
+    let rows: Vec<Vec<String>> = result
+        .windows
+        .iter()
+        .map(|placement| {
+            vec![
+                placement.window.0.to_string(),
+                format!("{:.0}", placement.rect.origin.x),
+                format!("{:.0}", placement.rect.origin.y),
+                format!("{:.0}", placement.rect.size.width),
+                format!("{:.0}", placement.rect.size.height),
+            ]
+        })
+        .collect();
+    print!("{}", render_grid(&headers, &rows));
+    println!();
+    println!(
+        "Layout: {} on display {} ({} window(s)). Read-only preview: no windows changed.",
+        result.layout,
+        display.id,
+        result.windows.len()
+    );
+    Ok(())
+}
+
+fn parse_layout_args(args: &[String]) -> Result<LayoutOptions, AppError> {
+    let mut options = LayoutOptions::default();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--layout" => {
+                let value = flag_value(args, index, "--layout")?;
+                options.layout = Some(LayoutType::parse(value).ok_or_else(|| {
+                    AppError::InvalidArgument(format!(
+                        "invalid --layout value: {value} (expected masterstack, columns, rows or monocle)"
+                    ))
+                })?);
+                index += 2;
+            }
+            "--display" => {
+                options.display = Some(flag_value(args, index, "--display")?.to_string());
+                index += 2;
+            }
+            "--outer-gap" => {
+                options.outer_gap = Some(flag_f64(args, index, "--outer-gap")?);
+                index += 2;
+            }
+            "--inner-gap" => {
+                options.inner_gap = Some(flag_f64(args, index, "--inner-gap")?);
+                index += 2;
+            }
+            "--ratio" => {
+                options.ratio = Some(flag_f64(args, index, "--ratio")?);
+                index += 2;
+            }
+            "--master-count" => {
+                let value = flag_value(args, index, "--master-count")?;
+                options.master_count = Some(value.parse::<usize>().map_err(|_| {
+                    AppError::InvalidArgument(format!("invalid --master-count value: {value}"))
+                })?);
+                index += 2;
+            }
+            other => {
+                return Err(AppError::InvalidArgument(format!(
+                    "unexpected argument: {other}"
+                )));
+            }
+        }
+    }
+    Ok(options)
+}
+
+fn contains_point(rect: Rect, x: f64, y: f64) -> bool {
+    x >= rect.origin.x
+        && x < rect.origin.x + rect.size.width
+        && y >= rect.origin.y
+        && y < rect.origin.y + rect.size.height
+}
+
+fn map_layout_error(error: layout::LayoutError) -> AppError {
+    AppError::InvalidArgument(error.to_string())
 }
 
 /// A geometry request supplied on the command line.
