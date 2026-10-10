@@ -8,6 +8,7 @@
 use std::os::raw::{c_uchar, c_void};
 
 use core_foundation_sys::base::{CFRelease, CFTypeRef};
+use core_foundation_sys::runloop::CFRunLoopSourceRef;
 use core_foundation_sys::string::CFStringRef;
 
 /// Core Foundation `Boolean`.
@@ -16,8 +17,18 @@ pub type Boolean = c_uchar;
 pub type AXUIElementRef = *const c_void;
 /// Opaque handle to a boxed accessibility value.
 pub type AXValueRef = *const c_void;
+/// Opaque handle to an accessibility observer.
+pub type AXObserverRef = *const c_void;
 /// Accessibility error code (`AXError`).
 pub type AXError = i32;
+
+/// Callback invoked by the Accessibility runtime for a registered notification.
+///
+/// Ownership: the observer, element, and notification name are borrowed for the
+/// duration of the call only. The `refcon` is the pointer supplied when the
+/// notification was registered and is never owned by the runtime.
+pub type AXObserverCallback =
+    unsafe extern "C" fn(AXObserverRef, AXUIElementRef, CFStringRef, *mut c_void);
 
 /// `kAXErrorSuccess`.
 pub const AX_ERROR_SUCCESS: AXError = 0;
@@ -31,6 +42,8 @@ pub const AX_ERROR_CANNOT_COMPLETE: AXError = -25204;
 pub const AX_ERROR_ATTRIBUTE_UNSUPPORTED: AXError = -25205;
 /// `kAXErrorActionUnsupported`.
 pub const AX_ERROR_ACTION_UNSUPPORTED: AXError = -25206;
+/// `kAXErrorNotificationUnsupported`.
+pub const AX_ERROR_NOTIFICATION_UNSUPPORTED: AXError = -25207;
 /// `kAXErrorNotImplemented`.
 pub const AX_ERROR_NOT_IMPLEMENTED: AXError = -25208;
 /// `kAXErrorAPIDisabled`.
@@ -89,6 +102,28 @@ unsafe extern "C" {
     pub fn AXValueCreate(the_type: i32, value: *const c_void) -> AXValueRef;
     /// Returns the Core Foundation type id for `AXValue`.
     pub fn AXValueGetTypeID() -> core_foundation_sys::base::CFTypeID;
+
+    /// Creates an accessibility observer for the process with the given pid.
+    ///
+    /// On success the observer is returned under the Create rule (owned `+1`).
+    pub fn AXObserverCreate(
+        application: libc::pid_t,
+        callback: AXObserverCallback,
+        out_observer: *mut AXObserverRef,
+    ) -> AXError;
+    /// Registers a notification for `element` with `observer`.
+    ///
+    /// `refcon` is passed back verbatim to the callback and is never retained.
+    pub fn AXObserverAddNotification(
+        observer: AXObserverRef,
+        element: AXUIElementRef,
+        notification: CFStringRef,
+        refcon: *mut c_void,
+    ) -> AXError;
+    /// Returns the run-loop source that delivers this observer's callbacks.
+    ///
+    /// The source is owned by the observer; it must not be released separately.
+    pub fn AXObserverGetRunLoopSource(observer: AXObserverRef) -> CFRunLoopSourceRef;
 }
 
 /// Value of the `kAXWindowsAttribute` attribute constant.
@@ -112,6 +147,21 @@ pub const AX_MINIMIZED_ATTRIBUTE: &str = "AXMinimized";
 pub const AX_FULL_SCREEN_ATTRIBUTE: &str = "AXFullScreen";
 /// Value of the `kAXRaiseAction` action constant.
 pub const AX_RAISE_ACTION: &str = "AXRaise";
+
+/// Accessibility notification: a window was created (`kAXWindowCreatedNotification`).
+pub const AX_WINDOW_CREATED_NOTIFICATION: &str = "AXWindowCreated";
+/// Accessibility notification: an element was destroyed (`kAXUIElementDestroyedNotification`).
+pub const AX_UI_ELEMENT_DESTROYED_NOTIFICATION: &str = "AXUIElementDestroyed";
+/// Accessibility notification: a window moved (`kAXMovedNotification`).
+pub const AX_MOVED_NOTIFICATION: &str = "AXMoved";
+/// Accessibility notification: a window resized (`kAXResizedNotification`).
+pub const AX_RESIZED_NOTIFICATION: &str = "AXResized";
+/// Accessibility notification: the focused window changed (`kAXFocusedWindowChangedNotification`).
+pub const AX_FOCUSED_WINDOW_CHANGED_NOTIFICATION: &str = "AXFocusedWindowChanged";
+/// Accessibility notification: a window was minimized (`kAXWindowMiniaturizedNotification`).
+pub const AX_WINDOW_MINIATURIZED_NOTIFICATION: &str = "AXWindowMiniaturized";
+/// Accessibility notification: a window was restored (`kAXWindowDeminiaturizedNotification`).
+pub const AX_WINDOW_DEMINIATURIZED_NOTIFICATION: &str = "AXWindowDeminiaturized";
 
 /// Owns a `+1` Core Foundation reference and releases it on drop.
 pub struct CfGuard(CFTypeRef);

@@ -67,6 +67,38 @@ fn discover_application_windows(pid: ProcessId, application: &str) -> Vec<Window
     windows
 }
 
+/// Visits every window element of `pid` while the backing array is alive.
+///
+/// The element passed to `visit` is borrowed for the duration of the call; it
+/// must not be stored beyond the closure.
+pub(crate) fn for_each_window(pid: ProcessId, mut visit: impl FnMut(AXUIElementRef)) {
+    // SAFETY: `pid` comes from NSWorkspace; the returned element is owned.
+    let application_element = unsafe { accessibility::AXUIElementCreateApplication(pid.0) };
+    if application_element.is_null() {
+        return;
+    }
+    let _application_guard = unsafe { CfGuard::new(application_element as CFTypeRef) };
+
+    let Some(array_guard) =
+        copy_attribute(application_element, accessibility::AX_WINDOWS_ATTRIBUTE)
+    else {
+        return;
+    };
+
+    let array = array_guard.as_ref() as CFArrayRef;
+    // SAFETY: `array` is a valid CFArray returned by the windows attribute.
+    let count = unsafe { CFArrayGetCount(array) };
+
+    for index in 0..count {
+        // SAFETY: `index` is within `[0, count)`, so the borrowed pointer is
+        // valid while `array_guard` is alive.
+        let element = unsafe { CFArrayGetValueAtIndex(array, index) } as AXUIElementRef;
+        if !element.is_null() {
+            visit(element);
+        }
+    }
+}
+
 pub(crate) fn window_bounds(element: AXUIElementRef) -> Option<Rect> {
     let position = copy_point(element, accessibility::AX_POSITION_ATTRIBUTE)?;
     let size = copy_size(element, accessibility::AX_SIZE_ATTRIBUTE)?;

@@ -3,8 +3,12 @@
 //! Commands only decide *what* to do; the actual native work is delegated to
 //! the `platform` layer.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
 use crate::app;
 use crate::core::display::{self, Display, DisplayId};
+use crate::core::event::{AppEvent, DomainEvent, WindowEvent};
 use crate::core::geometry::Rect;
 use crate::core::layout::{self, LayoutConfig, LayoutType, Shortcut};
 use crate::core::layout_plan::{ExecutionReport, PlanError};
@@ -12,7 +16,7 @@ use crate::core::selector::{self, SelectionError, WindowFilter, WindowSelector};
 use crate::core::window::{ProcessId, WindowId, WindowInfo};
 use crate::error::AppError;
 use crate::platform::macos::accessibility;
-use crate::platform::macos::{control, displays, windows};
+use crate::platform::macos::{control, displays, observers, windows};
 
 /// Executes the command described by `args` (excluding the program name).
 pub fn run(args: &[String]) -> Result<(), AppError> {
@@ -25,6 +29,7 @@ pub fn run(args: &[String]) -> Result<(), AppError> {
         Some("display-info") => display_info(args.get(1).map(String::as_str)),
         Some("layout") => layout_preview(&args[1..]),
         Some("apply") => apply_layout(&args[1..]),
+        Some("watch") => watch(),
         Some("-h" | "--help") | None => {
             print_usage();
             Ok(())
@@ -45,6 +50,7 @@ fn print_usage() {
     println!("  display-info    Show detailed geometry for one display.");
     println!("  layout          Preview a tiling layout without changing windows.");
     println!("  apply           Apply a tiling layout to windows on a display.");
+    println!("  watch           Monitor window events until interrupted (Ctrl+C).");
     println!("  -h, --help      Show this help message.");
     println!();
     println!("Selectors (default: --focused):");
@@ -833,6 +839,209 @@ fn format_row(cells: &[String], widths: &[usize]) -> String {
 fn format_separator(widths: &[usize]) -> String {
     let segments: Vec<String> = widths.iter().map(|width| "-".repeat(*width)).collect();
     format!("{}\n", segments.join("  "))
+}
+
+/// Set by the SIGINT handler installed by [`watch`].
+static WATCH_RUNNING: AtomicBool = AtomicBool::new(true);
+
+/// Runs the foreground event monitor until interrupted with Ctrl+C.
+fn watch() -> Result<(), AppError> {
+    if !accessibility::is_trusted() {
+        return Err(AppError::PermissionDenied);
+    }
+
+    install_interrupt_handler();
+
+    // The manager must live at a stable address for the duration of the run:
+    // native callbacks are handed a pointer to it.
+    let mut manager = Box::new(observers::ObserverManager::new());
+    manager.subscribe_workspace();
+    manager.sync_applications();
+
+    let mut processor = app::event_processor::EventProcessor::default();
+    let interval = processor.coalesce_interval().as_secs_f64();
+
+    println!("Watching for window events. Press Ctrl+C to stop.");
+
+    // Register initial observers and seed the registry from a first snapshot.
+    watch_pump(&mut manager, &mut processor);
+
+    while WATCH_RUNNING.load(Ordering::SeqCst) {
+        observers::run_loop_step(interval);
+        watch_pump(&mut manager, &mut processor);
+    }
+
+    for event in processor.flush(Instant::now()) {
+        report_event(&event);
+    }
+    report_processor_diagnostics(processor.diagnostics(), processor.registry().len());
+    report_observer_diagnostics(manager.diagnostics());
+    manager.shutdown();
+    println!("Stopped.");
+    Ok(())
+}
+
+/// Drains queued native events, updates observers, and reports transitions.
+fn watch_pump(
+    manager: &mut observers::ObserverManager,
+    processor: &mut app::event_processor::EventProcessor,
+) {
+    let now = Instant::now();
+    let mut reconcile = false;
+
+    for event in manager.drain_events() {
+        match &event {
+            DomainEvent::App {
+                event: AppEvent::Launched { pid, name },
+                ..
+            } => {
+                if let Err(error) = manager.register_application(*pid, name) {
+                    eprintln!(
+                        "observer registration failed for {name} (pid {}): {error}",
+                        pid.0
+                    );
+                }
+                reconcile = true;
+            }
+            DomainEvent::App {
+                event: AppEvent::Terminated { pid },
+                ..
+            } => {
+                manager.remove_application(*pid);
+                reconcile = true;
+            }
+            _ => {}
+        }
+
+        for transition in processor.process(event, now) {
+            report_event(&transition);
+        }
+    }
+
+    for transition in processor.flush(now) {
+        report_event(&transition);
+    }
+
+    if reconcile {
+        for transition in processor.reconcile(manager.snapshot(), now) {
+            report_event(&transition);
+        }
+    }
+}
+
+/// Prints a normalized event in the documented `watch` format.
+fn report_event(event: &DomainEvent) {
+    let clock = format_clock();
+    match event {
+        DomainEvent::App { event, .. } => match event {
+            AppEvent::Launched { pid, name } => {
+                println!("[{clock}] APPLICATION_LAUNCHED pid={} name={name}", pid.0);
+            }
+            AppEvent::Terminated { pid } => {
+                println!("[{clock}] APPLICATION_TERMINATED pid={}", pid.0);
+            }
+            AppEvent::Activated { pid } => {
+                println!("[{clock}] APPLICATION_ACTIVATED pid={}", pid.0);
+            }
+            AppEvent::Deactivated { pid } => {
+                println!("[{clock}] APPLICATION_DEACTIVATED pid={}", pid.0);
+            }
+        },
+        DomainEvent::Window { event, .. } => match event {
+            WindowEvent::Created { pid, wid, bounds } => {
+                let suffix = bounds
+                    .map(format_rect)
+                    .unwrap_or_else(|| "geometry=unknown".to_string());
+                println!(
+                    "[{clock}] WINDOW_CREATED pid={} window={} {suffix}",
+                    pid.0, wid.0
+                );
+            }
+            WindowEvent::Destroyed { pid, wid } => {
+                println!("[{clock}] WINDOW_DESTROYED pid={} window={}", pid.0, wid.0);
+            }
+            WindowEvent::Moved { pid, wid, bounds } => {
+                println!(
+                    "[{clock}] WINDOW_MOVED pid={} window={} x={:.0} y={:.0}",
+                    pid.0, wid.0, bounds.origin.x, bounds.origin.y
+                );
+            }
+            WindowEvent::Resized { pid, wid, bounds } => {
+                println!(
+                    "[{clock}] WINDOW_RESIZED pid={} window={} width={:.0} height={:.0}",
+                    pid.0, wid.0, bounds.size.width, bounds.size.height
+                );
+            }
+            WindowEvent::Focused { pid, wid } => {
+                println!("[{clock}] WINDOW_FOCUSED pid={} window={}", pid.0, wid.0);
+            }
+            WindowEvent::Minimized { pid, wid } => {
+                println!("[{clock}] WINDOW_MINIMIZED pid={} window={}", pid.0, wid.0);
+            }
+            WindowEvent::Restored { pid, wid } => {
+                println!("[{clock}] WINDOW_RESTORED pid={} window={}", pid.0, wid.0);
+            }
+        },
+    }
+}
+
+/// Reports observer setup diagnostics that are useful to distinguish expected
+/// platform limitations from unexpected failures.
+fn report_observer_diagnostics(diagnostics: observers::ObserverDiagnostics) {
+    if diagnostics.observer_creation_failures > 0
+        || diagnostics.registration_failures > 0
+        || diagnostics.unknown_elements > 0
+        || diagnostics.overflow_events > 0
+    {
+        eprintln!(
+            "diagnostics: observer_failures={} registration_failures={} unknown_elements={} unsupported_notifications={} overflow_events={}",
+            diagnostics.observer_creation_failures,
+            diagnostics.registration_failures,
+            diagnostics.unknown_elements,
+            diagnostics.unsupported_notifications,
+            diagnostics.overflow_events,
+        );
+    }
+}
+
+/// Reports how the processor behaved, including registry size and duplicate
+/// suppression.
+fn report_processor_diagnostics(diagnostics: app::event_processor::Diagnostics, tracked: usize) {
+    eprintln!(
+        "processor: tracked={tracked} processed={} duplicates={} coalesced={} unknown={} reconciliations={}",
+        diagnostics.events_processed,
+        diagnostics.duplicates,
+        diagnostics.coalesced,
+        diagnostics.unknown_window_refs,
+        diagnostics.reconciliations,
+    );
+}
+
+/// Formats the current wall-clock time as `HH:MM:SS` (UTC).
+fn format_clock() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0)
+        % 86_400;
+    format!(
+        "{:02}:{:02}:{:02}",
+        seconds / 3_600,
+        (seconds % 3_600) / 60,
+        seconds % 60
+    )
+}
+
+extern "C" fn handle_sigint(_signal: libc::c_int) {
+    // Storing an atomic flag is safe inside a signal handler.
+    WATCH_RUNNING.store(false, Ordering::SeqCst);
+}
+
+fn install_interrupt_handler() {
+    // SAFETY: `handle_sigint` has the expected signal handler signature.
+    unsafe {
+        libc::signal(libc::SIGINT, handle_sigint as libc::sighandler_t);
+    }
 }
 
 #[cfg(test)]
