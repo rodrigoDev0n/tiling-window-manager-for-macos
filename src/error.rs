@@ -21,6 +21,8 @@ pub enum AppError {
     UnsupportedWindow,
     /// A native window operation failed for another reason.
     ControlFailed(String),
+    /// The requested display identifier is not among the active displays.
+    DisplayNotFound(u32),
 }
 
 impl fmt::Display for AppError {
@@ -54,6 +56,9 @@ impl fmt::Display for AppError {
                 )
             }
             AppError::ControlFailed(message) => write!(f, "window control failed: {message}"),
+            AppError::DisplayNotFound(id) => {
+                write!(f, "no active display with identifier {id}")
+            }
         }
     }
 }

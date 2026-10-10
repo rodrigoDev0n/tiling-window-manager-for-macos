@@ -3,6 +3,7 @@
 //! Commands only decide *what* to do; the actual native work is delegated to
 //! the `platform` layer.
 
+use crate::core::display::{self, Display, DisplayId};
 use crate::core::geometry::Rect;
 use crate::core::layout::{self, Shortcut};
 use crate::core::selector::{self, SelectionError, WindowFilter, WindowSelector};
@@ -18,6 +19,8 @@ pub fn run(args: &[String]) -> Result<(), AppError> {
         Some("windows") => list_windows(),
         Some("move") => move_window(&args[1..]),
         Some("focus") => focus_window(&args[1..]),
+        Some("displays") => list_displays(),
+        Some("display-info") => display_info(args.get(1).map(String::as_str)),
         Some("-h" | "--help") | None => {
             print_usage();
             Ok(())
@@ -30,11 +33,13 @@ fn print_usage() {
     println!("Usage: tiling_window <command>");
     println!();
     println!("Commands:");
-    println!("  permissions   Report Accessibility authorization status.");
-    println!("  windows       List accessible windows of running applications.");
-    println!("  move          Move/resize a window to an absolute or predefined geometry.");
-    println!("  focus         Focus (raise) a window.");
-    println!("  -h, --help    Show this help message.");
+    println!("  permissions     Report Accessibility authorization status.");
+    println!("  windows         List accessible windows of running applications.");
+    println!("  move            Move/resize a window to an absolute or predefined geometry.");
+    println!("  focus           Focus (raise) a window.");
+    println!("  displays        List active displays and their geometry.");
+    println!("  display-info    Show detailed geometry for one display.");
+    println!("  -h, --help      Show this help message.");
     println!();
     println!("Selectors (default: --focused):");
     println!("  --focused             The focused window of the frontmost application.");
@@ -46,6 +51,9 @@ fn print_usage() {
     println!("move geometry:");
     println!("  --x <f64> --y <f64> --width <f64> --height <f64>");
     println!("  --to <left|right|maximize|center>");
+    println!();
+    println!("display-info argument:");
+    println!("  <display-id>    CGDirectDisplayID in decimal, or 0x-prefixed hex.");
 }
 
 fn permissions() -> Result<(), AppError> {
@@ -71,6 +79,38 @@ fn list_windows() -> Result<(), AppError> {
     }
 
     print!("{}", render_table(&discovered));
+    Ok(())
+}
+
+fn list_displays() -> Result<(), AppError> {
+    let active = displays::snapshot();
+    if active.is_empty() {
+        println!("No active displays found.");
+        return Ok(());
+    }
+
+    print!("{}", render_displays_table(&active));
+    if let Some(main) = display::main_display(&active) {
+        println!();
+        println!(
+            "Main display: {} ({})",
+            main.id,
+            main.name.as_deref().unwrap_or("(unknown)")
+        );
+    }
+    Ok(())
+}
+
+fn display_info(id: Option<&str>) -> Result<(), AppError> {
+    let raw = id.ok_or_else(|| {
+        AppError::InvalidArgument("display-info requires a display id".to_string())
+    })?;
+    let parsed =
+        DisplayId::parse(raw).map_err(|error| AppError::InvalidArgument(error.to_string()))?;
+
+    let active = displays::snapshot();
+    let display = display::find(&active, parsed).ok_or(AppError::DisplayNotFound(parsed.0))?;
+    print!("{}", render_display_detail(display));
     Ok(())
 }
 
@@ -338,7 +378,7 @@ fn display_title(info: &WindowInfo) -> String {
 fn render_table(windows: &[WindowInfo]) -> String {
     let headers = ["PID", "APPLICATION", "TITLE", "X", "Y", "WIDTH", "HEIGHT"];
 
-    let rows: Vec<[String; 7]> = windows
+    let rows: Vec<Vec<String>> = windows
         .iter()
         .map(|window| {
             let (x, y, width, height) = match window.bounds {
@@ -355,7 +395,7 @@ fn render_table(windows: &[WindowInfo]) -> String {
                     "-".to_string(),
                 ),
             };
-            [
+            vec![
                 window.pid.0.to_string(),
                 window.application.clone(),
                 window
@@ -370,23 +410,96 @@ fn render_table(windows: &[WindowInfo]) -> String {
         })
         .collect();
 
-    let mut widths: Vec<usize> = headers.iter().map(|header| header.len()).collect();
-    for row in &rows {
+    render_grid(&headers, &rows)
+}
+
+fn render_displays_table(displays: &[Display]) -> String {
+    let headers = [
+        "ID", "MAIN", "NAME", "SCALE", "X", "Y", "WIDTH", "HEIGHT", "USABLE-X", "USABLE-Y",
+        "USABLE-W", "USABLE-H",
+    ];
+
+    let rows: Vec<Vec<String>> = displays
+        .iter()
+        .map(|display| {
+            vec![
+                display.id.to_string(),
+                yes_no(display.main),
+                display
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| "(unknown)".to_string()),
+                format!("{:.1}", display.scale),
+                format!("{:.0}", display.bounds.origin.x),
+                format!("{:.0}", display.bounds.origin.y),
+                format!("{:.0}", display.bounds.size.width),
+                format!("{:.0}", display.bounds.size.height),
+                format!("{:.0}", display.usable.origin.x),
+                format!("{:.0}", display.usable.origin.y),
+                format!("{:.0}", display.usable.size.width),
+                format!("{:.0}", display.usable.size.height),
+            ]
+        })
+        .collect();
+
+    render_grid(&headers, &rows)
+}
+
+fn render_display_detail(display: &Display) -> String {
+    format!(
+        "ID: {id}\n\
+         Name: {name}\n\
+         Main: {main}\n\
+         Scale: {scale:.1}\n\
+         Valid: {valid}\n\
+         Bounds (AX points): x={bx:.0} y={by:.0} width={bw:.0} height={bh:.0}\n\
+         Usable (AX points): x={ux:.0} y={uy:.0} width={uw:.0} height={uh:.0}\n",
+        id = display.id,
+        name = display.name.as_deref().unwrap_or("(unknown)"),
+        main = if display.main { "yes" } else { "no" },
+        scale = display.scale,
+        valid = if display.is_consistent() { "yes" } else { "no" },
+        bx = display.bounds.origin.x,
+        by = display.bounds.origin.y,
+        bw = display.bounds.size.width,
+        bh = display.bounds.size.height,
+        ux = display.usable.origin.x,
+        uy = display.usable.origin.y,
+        uw = display.usable.size.width,
+        uh = display.usable.size.height,
+    )
+}
+
+fn yes_no(value: bool) -> String {
+    if value {
+        "yes".to_string()
+    } else {
+        "no".to_string()
+    }
+}
+
+fn render_grid(headers: &[&str], rows: &[Vec<String>]) -> String {
+    let mut widths: Vec<usize> = headers
+        .iter()
+        .map(|header| header.chars().count())
+        .collect();
+    for row in rows {
         for (index, cell) in row.iter().enumerate() {
             widths[index] = widths[index].max(cell.chars().count());
         }
     }
 
     let mut output = String::new();
-    output.push_str(&format_row(&headers.map(String::from), &widths));
+    let header_cells: Vec<String> = headers.iter().map(|header| header.to_string()).collect();
+    output.push_str(&format_row(&header_cells, &widths));
     output.push_str(&format_separator(&widths));
-    for row in &rows {
+    for row in rows {
         output.push_str(&format_row(row, &widths));
     }
     output
 }
 
-fn format_row(cells: &[String; 7], widths: &[usize]) -> String {
+fn format_row(cells: &[String], widths: &[usize]) -> String {
     let mut line = String::new();
     for (index, cell) in cells.iter().enumerate() {
         if index > 0 {
@@ -451,6 +564,39 @@ mod tests {
         let lines: Vec<&str> = table.lines().collect();
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("PID"));
+    }
+
+    fn sample_display(id: u32, main: bool) -> Display {
+        Display {
+            id: DisplayId(id),
+            name: Some("Built-in Retina Display".to_string()),
+            main,
+            scale: 2.0,
+            bounds: Rect::new(0.0, 0.0, 1440.0, 900.0),
+            usable: Rect::new(0.0, 25.0, 1440.0, 875.0),
+        }
+    }
+
+    #[test]
+    fn displays_table_contains_expected_fields() {
+        let table = render_displays_table(&[sample_display(1, true)]);
+        assert!(table.contains("ID"));
+        assert!(table.contains("USABLE-H"));
+        assert!(table.contains("1"));
+        assert!(table.contains("Built-in Retina Display"));
+        assert!(table.contains("yes"));
+        assert!(table.contains("1440"));
+        assert!(table.contains("875"));
+    }
+
+    #[test]
+    fn display_detail_contains_geometry() {
+        let detail = render_display_detail(&sample_display(1, true));
+        assert!(detail.contains("ID: 1"));
+        assert!(detail.contains("Main: yes"));
+        assert!(detail.contains("Scale: 2.0"));
+        assert!(detail.contains("Valid: yes"));
+        assert!(detail.contains("height=875"));
     }
 
     fn args(items: &[&str]) -> Vec<String> {

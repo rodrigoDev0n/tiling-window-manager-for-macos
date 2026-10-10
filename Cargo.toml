@@ -8,5 +8,5 @@ core-foundation = "0.10.1"
 core-foundation-sys = "0.8.7"
 libc = "0.2.190"
 objc2 = { version = "0.6.5", default-features = false, features = ["std", "alloc"] }
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSWorkspace", "NSRunningApplication", "NSScreen", "libc"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSString", "NSEnumerator"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSWorkspace", "NSRunningApplication", "NSScreen", "NSGraphics", "objc2-core-foundation", "libc"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSString", "NSEnumerator", "NSDictionary"] }
