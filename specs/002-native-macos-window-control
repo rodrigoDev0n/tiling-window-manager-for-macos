@@ -1,0 +1,50 @@
+We are starting SPEC-002: Native macOS Window Control.
+
+Read the following files:
+
+- `AGENTS.md`
+- `specs/001-window-discovery.md`
+- `specs/002-window-control.md`
+
+Inspect the existing Rust implementation of SPEC-001.
+
+We are following strict Spec-Driven Development.
+
+**Do not modify implementation code yet.**
+
+Your task is to review SPEC-002 and propose a technically sound implementation plan.
+
+Pay special attention to:
+
+1. Reusing the existing Accessibility API integration.
+2. Safely identifying individual windows across separate CLI executions.
+3. Handling multiple windows belonging to the same PID.
+4. Using AXUIElementCopyAttributeValue, AXUIElementSetAttributeValue, and AXUIElementIsAttributeSettable appropriately.
+5. Handling native Core Foundation ownership and AXError results.
+6. Detecting unsupported or restricted windows.
+7. Reading actual window geometry after movement or resizing.
+8. Avoiding unnecessary changes to SPEC-001.
+9. Maintaining platform-independent geometry models.
+10. Designing testable abstractions without overengineering.
+
+Evaluate whether the proposed CLI window selector is sufficiently safe.
+
+If a temporary index is not reliable, propose an alternative using public macOS APIs.
+
+Do not assume Core Graphics window IDs can be directly converted into Accessibility window references.
+
+Deliver:
+
+- Technical feasibility assessment.
+- Proposed architecture and file changes.
+- Window identification strategy.
+- Native API integration strategy.
+- Error handling strategy.
+- Test plan mapped to acceptance criteria.
+- Technical risks and limitations.
+- Step-by-step implementation plan.
+
+Identify any requirements that should be clarified or changed.
+
+Wait for my explicit approval before implementing anything.
+
