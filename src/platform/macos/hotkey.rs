@@ -1,30 +1,38 @@
-//! Global hotkey registration through the Carbon Event Manager (SPEC-007).
+//! Global hotkey registration through the Carbon Event Manager (SPEC-007,
+//! SPEC-008).
 //!
 //! `RegisterEventHotKey`/`InstallEventHandler` are documented (legacy, but
 //! public) Carbon APIs. They integrate with the process's main run loop, work
 //! while another application is frontmost, and need no event tap or helper
-//! process, which is why SPEC-007 selects them for the overlay toggle.
+//! process.
 //!
-//! The Carbon callback only flips an atomic flag; the foreground run loop owns
-//! the actual window mutation. Native handles stay on the main thread and are
-//! never shared across threads.
+//! [`HotkeySet`] registers one Carbon handler and one hotkey per [`Binding`].
+//! The Carbon callback only stores the pressed hotkey id in a bounded queue; the
+//! foreground run loop maps ids back to [`Action`]s through the binding table
+//! and owns the actual window mutation. Native handles stay on the main thread
+//! and are never shared across threads.
+//!
+//! Only one [`HotkeySet`] should be alive at a time: the callback queue is a
+//! process-wide static.
 
+use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+
+use crate::core::action::Action;
+use crate::core::shortcut::{Binding, Key, Modifiers, format_binding};
 
 /// The Command modifier bit (`cmdKey`).
-pub const CMD: u32 = 0x0100;
+const CMD: u32 = 0x0100;
+/// The Shift modifier bit (`shiftKey`).
+const SHIFT: u32 = 0x0200;
 /// The Option modifier bit (`optionKey`).
-pub const OPTION: u32 = 0x0800;
-/// Virtual key code for `/` (`kVK_ANSI_Slash`).
-pub const SLASH: u32 = 0x2C;
+const OPTION: u32 = 0x0800;
 
 /// Four-character signature identifying this application's hotkeys ("OVER").
-const OVERLAY_SIGNATURE: u32 = 0x4F56_4552;
-/// Identifier of the overlay toggle hotkey within the signature.
-const OVERLAY_HOTKEY_ID: u32 = 1;
+const SIGNATURE: u32 = 0x4F56_4552;
 
 const NO_ERR: i32 = 0;
 // `kEventClassKeyboard`/`kEventHotKeyPressed`.
@@ -91,13 +99,11 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-/// Failure while installing the handler or registering the hotkey.
+/// Failure while installing the Carbon event handler.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HotkeyError {
     /// `InstallEventHandler` returned a non-zero `OSStatus`.
     InstallFailed(i32),
-    /// `RegisterEventHotKey` returned a non-zero `OSStatus`.
-    RegisterFailed(i32),
 }
 
 impl std::fmt::Display for HotkeyError {
@@ -109,24 +115,77 @@ impl std::fmt::Display for HotkeyError {
                     "failed to install the hotkey event handler (status {status})"
                 )
             }
-            HotkeyError::RegisterFailed(status) => {
-                write!(f, "failed to register the global hotkey (status {status})")
-            }
         }
     }
 }
 
 impl std::error::Error for HotkeyError {}
 
-/// Set by the Carbon callback; cleared by [`take_toggle_request`].
-static TOGGLE_REQUESTED: AtomicBool = AtomicBool::new(false);
-
-/// Returns and clears a pending toggle request made by the global hotkey.
+/// Queue of hotkey ids received from the Carbon callback.
 ///
-/// This is the only channel from the native callback to the run loop; the
-/// callback itself never touches the window.
-pub fn take_toggle_request() -> bool {
-    TOGGLE_REQUESTED.swap(false, Ordering::SeqCst)
+/// The callback only pushes; the run loop drains through
+/// [`HotkeySet::take_pending`]. Holding the lock lasts for the duration of the
+/// push/pop only, never while native APIs are invoked.
+static PENDING_HOTKEYS: Mutex<VecDeque<u32>> = Mutex::new(VecDeque::new());
+
+/// The virtual key code (`kVK_*`) for a logical [`Key`], or `None` when the
+/// key has no ANSI key code.
+pub fn virtual_key_code(key: Key) -> Option<u32> {
+    match key {
+        Key::Char('/') => Some(0x2C), // kVK_ANSI_Slash
+        Key::Char(character) => ansi_letter_code(character),
+        Key::Up => Some(0x7E),
+        Key::Down => Some(0x7D),
+        Key::Left => Some(0x7B),
+        Key::Right => Some(0x7C),
+    }
+}
+
+fn ansi_letter_code(character: char) -> Option<u32> {
+    match character.to_ascii_lowercase() {
+        'a' => Some(0x00),
+        'b' => Some(0x0B),
+        'c' => Some(0x08),
+        'd' => Some(0x02),
+        'e' => Some(0x0E),
+        'f' => Some(0x03),
+        'g' => Some(0x05),
+        'h' => Some(0x04),
+        'i' => Some(0x22),
+        'j' => Some(0x26),
+        'k' => Some(0x28),
+        'l' => Some(0x25),
+        'm' => Some(0x2E),
+        'n' => Some(0x2D),
+        'o' => Some(0x1F),
+        'p' => Some(0x23),
+        'q' => Some(0x0C),
+        'r' => Some(0x0F),
+        's' => Some(0x01),
+        't' => Some(0x11),
+        'u' => Some(0x20),
+        'v' => Some(0x09),
+        'w' => Some(0x0D),
+        'x' => Some(0x07),
+        'y' => Some(0x10),
+        'z' => Some(0x06),
+        _ => None,
+    }
+}
+
+/// The Carbon modifier bits for `modifiers`.
+pub fn modifier_bits(modifiers: Modifiers) -> u32 {
+    let mut bits = 0;
+    if modifiers.command {
+        bits |= CMD;
+    }
+    if modifiers.option {
+        bits |= OPTION;
+    }
+    if modifiers.shift {
+        bits |= SHIFT;
+    }
+    bits
 }
 
 unsafe extern "C" fn hotkey_handler(
@@ -152,25 +211,32 @@ unsafe extern "C" fn hotkey_handler(
         )
     };
 
-    if status == NO_ERR
-        && hotkey_id.signature == OVERLAY_SIGNATURE
-        && hotkey_id.id == OVERLAY_HOTKEY_ID
-    {
-        TOGGLE_REQUESTED.store(true, Ordering::SeqCst);
+    if status == NO_ERR && hotkey_id.signature == SIGNATURE {
+        if let Ok(mut queue) = PENDING_HOTKEYS.lock() {
+            queue.push_back(hotkey_id.id);
+        }
     }
 
     NO_ERR
 }
 
-/// A registered global hotkey; unregisters and removes its handler on drop.
-pub struct Hotkey {
-    hotkey: EventHotKeyRef,
+/// A set of registered global hotkeys; unregisters them all and removes the
+/// single event handler on drop.
+pub struct HotkeySet {
+    bindings: Vec<Binding>,
+    hotkeys: Vec<EventHotKeyRef>,
     handler: EventHandlerRef,
+    failures: Vec<String>,
 }
 
-impl Hotkey {
-    /// Registers the overlay toggle hotkey (`⌘⌥/`) with the application target.
-    pub fn register_toggle() -> Result<Self, HotkeyError> {
+impl HotkeySet {
+    /// Registers one global hotkey per binding through a single Carbon handler.
+    ///
+    /// A binding that cannot be mapped to a key code or fails to register is
+    /// skipped; its reason is reported by [`HotkeySet::failures`] and the
+    /// remaining bindings stay active. Only an event-handler install failure
+    /// aborts registration and raises [`HotkeyError`].
+    pub fn register(bindings: &[Binding]) -> Result<Self, HotkeyError> {
         let event_type = EventTypeSpec {
             event_class: EVENT_CLASS_KEYBOARD,
             event_kind: EVENT_HOT_KEY_PRESSED,
@@ -194,39 +260,84 @@ impl Hotkey {
             return Err(HotkeyError::InstallFailed(status));
         }
 
-        let hotkey_id = EventHotKeyID {
-            signature: OVERLAY_SIGNATURE,
-            id: OVERLAY_HOTKEY_ID,
+        let mut set = HotkeySet {
+            bindings: bindings.to_vec(),
+            hotkeys: Vec::with_capacity(bindings.len()),
+            handler,
+            failures: Vec::new(),
         };
-        let mut hotkey: EventHotKeyRef = ptr::null_mut();
-        // SAFETY: the target and hotkey id are valid for the duration of the
-        // call; `hotkey` receives the registration handle.
-        let status = unsafe {
-            RegisterEventHotKey(
-                SLASH,
-                CMD | OPTION,
-                hotkey_id,
-                GetApplicationEventTarget(),
-                0,
-                &mut hotkey,
-            )
-        };
-        if status != NO_ERR {
-            // SAFETY: `handler` was installed successfully above.
-            unsafe { RemoveEventHandler(handler) };
-            return Err(HotkeyError::RegisterFailed(status));
+
+        for (index, binding) in bindings.iter().enumerate() {
+            match virtual_key_code(binding.key) {
+                None => set
+                    .failures
+                    .push(format!("unsupported key for {}", format_binding(binding))),
+                Some(code) => {
+                    // SAFETY: the target and hotkey id are valid for the duration
+                    // of the call; `hotkey` receives the registration handle.
+                    let hotkey_id = EventHotKeyID {
+                        signature: SIGNATURE,
+                        id: index as u32,
+                    };
+                    let mut hotkey: EventHotKeyRef = ptr::null_mut();
+                    let status = unsafe {
+                        RegisterEventHotKey(
+                            code,
+                            modifier_bits(binding.modifiers),
+                            hotkey_id,
+                            GetApplicationEventTarget(),
+                            0,
+                            &mut hotkey,
+                        )
+                    };
+                    if status == NO_ERR {
+                        set.hotkeys.push(hotkey);
+                    } else {
+                        set.failures.push(format!(
+                            "failed to register {} (status {status})",
+                            format_binding(binding)
+                        ));
+                    }
+                }
+            }
         }
 
-        Ok(Self { hotkey, handler })
+        Ok(set)
+    }
+
+    /// Drains the pending hotkey presses and returns their actions, preserving
+    /// order.
+    pub fn take_pending(&self) -> Vec<Action> {
+        let ids = {
+            let Ok(mut queue) = PENDING_HOTKEYS.lock() else {
+                return Vec::new();
+            };
+            queue.drain(..).collect::<Vec<u32>>()
+        };
+
+        ids.into_iter()
+            .filter_map(|id| self.bindings.get(id as usize))
+            .map(|binding| binding.action)
+            .collect()
+    }
+
+    /// Reasons individual bindings could not be registered, in binding order.
+    pub fn failures(&self) -> &[String] {
+        &self.failures
     }
 }
 
-impl Drop for Hotkey {
+impl Drop for HotkeySet {
     fn drop(&mut self) {
-        // SAFETY: both handles were produced by the matching registration
-        // functions and are unregistered exactly once here.
+        // SAFETY: every handle was produced by the matching registration
+        // function and is unregistered exactly once here.
+        for hotkey in &self.hotkeys {
+            unsafe {
+                UnregisterEventHotKey(*hotkey);
+            }
+        }
+        // SAFETY: `handler` was installed by `register` and removed once.
         unsafe {
-            UnregisterEventHotKey(self.hotkey);
             RemoveEventHandler(self.handler);
         }
     }
@@ -235,18 +346,100 @@ impl Drop for Hotkey {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::action::Direction;
+    use crate::core::layout::LayoutType;
 
     #[test]
-    fn toggle_request_is_consumed_once() {
-        assert!(!take_toggle_request());
-        TOGGLE_REQUESTED.store(true, Ordering::SeqCst);
-        assert!(take_toggle_request());
-        assert!(!take_toggle_request());
+    fn pending_ids_are_drained_once() {
+        PENDING_HOTKEYS.lock().unwrap().clear();
+        PENDING_HOTKEYS.lock().unwrap().push_back(2);
+        PENDING_HOTKEYS.lock().unwrap().push_back(1);
+
+        let bindings = default_test_bindings();
+        let set = HotkeySet {
+            bindings: bindings.clone(),
+            hotkeys: Vec::new(),
+            handler: ptr::null_mut(),
+            failures: Vec::new(),
+        };
+
+        let actions = set.take_pending();
+        assert_eq!(actions.len(), 2);
+        assert!(PENDING_HOTKEYS.lock().is_ok_and(|queue| queue.is_empty()));
+        assert!(set.take_pending().is_empty());
     }
 
     #[test]
-    fn default_hotkey_is_command_option_slash() {
-        assert_eq!(CMD | OPTION, 0x0900);
-        assert_eq!(SLASH, 0x2C);
+    fn pending_out_of_range_ids_are_ignored() {
+        PENDING_HOTKEYS.lock().unwrap().clear();
+        PENDING_HOTKEYS.lock().unwrap().push_back(99);
+        let set = HotkeySet {
+            bindings: default_test_bindings(),
+            hotkeys: Vec::new(),
+            handler: ptr::null_mut(),
+            failures: Vec::new(),
+        };
+        assert!(set.take_pending().is_empty());
+    }
+
+    fn default_test_bindings() -> Vec<Binding> {
+        vec![
+            Binding {
+                key: Key::Char('/'),
+                modifiers: Modifiers::command_option(),
+                action: Action::ToggleOverlay,
+                description: String::new(),
+            },
+            Binding {
+                key: Key::Char('m'),
+                modifiers: Modifiers::command_option(),
+                action: Action::SetLayout(LayoutType::Monocle),
+                description: String::new(),
+            },
+            Binding {
+                key: Key::Left,
+                modifiers: Modifiers::command_option_shift(),
+                action: Action::MoveWindow(Direction::Left),
+                description: String::new(),
+            },
+        ]
+    }
+
+    #[test]
+    fn default_hotkey_uses_command_option_slash() {
+        let binding = &default_test_bindings()[0];
+        assert_eq!(modifier_bits(binding.modifiers), 0x0900);
+        assert_eq!(virtual_key_code(binding.key), Some(0x2C));
+    }
+
+    #[test]
+    fn letter_keys_map_to_ansi_key_codes() {
+        assert_eq!(virtual_key_code(Key::Char('m')), Some(0x2E));
+        assert_eq!(virtual_key_code(Key::Char('S')), Some(0x01));
+        assert_eq!(virtual_key_code(Key::Char('/')), Some(0x2C));
+    }
+
+    #[test]
+    fn arrow_keys_map_to_function_key_codes() {
+        assert_eq!(virtual_key_code(Key::Up), Some(0x7E));
+        assert_eq!(virtual_key_code(Key::Down), Some(0x7D));
+        assert_eq!(virtual_key_code(Key::Left), Some(0x7B));
+        assert_eq!(virtual_key_code(Key::Right), Some(0x7C));
+    }
+
+    #[test]
+    fn modifier_bits_reflect_the_selected_modifiers() {
+        let none = Modifiers {
+            command: false,
+            option: false,
+            shift: false,
+        };
+        assert_eq!(modifier_bits(none), 0);
+        assert_eq!(modifier_bits(Modifiers::command_option_shift()), 0x0B00);
+    }
+
+    #[test]
+    fn unsupported_chars_have_no_key_code() {
+        assert_eq!(virtual_key_code(Key::Char('1')), None);
     }
 }

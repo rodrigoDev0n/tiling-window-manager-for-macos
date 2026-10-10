@@ -13,7 +13,8 @@ use std::os::raw::c_void;
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
 use core_foundation_sys::array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef};
-use core_foundation_sys::base::{CFRelease, CFRetain, CFTypeRef};
+use core_foundation_sys::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
+use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 
 use crate::core::geometry::Rect;
 use crate::core::layout_plan::WindowRef;
@@ -266,6 +267,39 @@ pub fn focus_window(handle: &WindowHandle, pid: ProcessId) -> Result<(), Control
     } else {
         Err(ControlError::from_ax(error))
     }
+}
+
+/// Activates the application owning `pid` so it becomes the frontmost app and
+/// brings its windows forward.
+///
+/// Used by directional focus (SPEC-008): raising a window alone does not move
+/// perceptual focus when the target belongs to a different application.
+pub fn activate_application(pid: ProcessId) -> Result<(), ControlError> {
+    let Some(application) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid.0)
+    else {
+        return Err(ControlError::InvalidElement);
+    };
+    let _ = application.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
+    Ok(())
+}
+
+/// Returns the index (into `windows`) of the currently focused window, if the
+/// focused window is present in the slice.
+///
+/// The match uses `CFEqual` on the accessibility elements, so it does not depend
+/// on titles or geometry that could coincide between windows.
+pub fn focused_index(windows: &[LayoutWindow]) -> Option<usize> {
+    let focused = focused_window()?;
+    windows.iter().position(|window| {
+        // SAFETY: both pointers are live AXUIElement references that the
+        // handles own for the duration of the comparison.
+        unsafe {
+            CFEqual(
+                focused.handle.as_ptr() as CFTypeRef,
+                window.handle.as_ptr() as CFTypeRef,
+            ) != 0
+        }
+    })
 }
 
 fn discover_application_windows(pid: ProcessId, application: &str) -> Vec<ManagedWindow> {

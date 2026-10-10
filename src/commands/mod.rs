@@ -7,12 +7,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::app;
+use crate::core::action::{Action, Direction};
 use crate::core::display::{self, Display, DisplayId};
+use crate::core::display_assignment;
 use crate::core::event::{AppEvent, DomainEvent, WindowEvent};
 use crate::core::geometry::Rect;
 use crate::core::layout::{self, LayoutConfig, LayoutType, Shortcut};
-use crate::core::layout_plan::{ExecutionReport, PlanError};
-use crate::core::selector::{self, SelectionError, WindowFilter, WindowSelector};
+use crate::core::layout_plan::{ExecutionReport, PlanError, WindowRef};
+use crate::core::navigation;
+use crate::core::selector::{self, SelectionError, WindowFilter, WindowSelector, compare_windows};
 use crate::core::shortcut;
 use crate::core::window::{ProcessId, WindowId, WindowInfo};
 use crate::error::AppError;
@@ -32,6 +35,7 @@ pub fn run(args: &[String]) -> Result<(), AppError> {
         Some("apply") => apply_layout(&args[1..]),
         Some("watch") => watch(),
         Some("overlay") => show_overlay(),
+        Some("run") => run_manager(),
         Some("-h" | "--help") | None => {
             print_usage();
             Ok(())
@@ -54,6 +58,7 @@ fn print_usage() {
     println!("  apply           Apply a tiling layout to windows on a display.");
     println!("  watch           Monitor window events until interrupted (Ctrl+C).");
     println!("  overlay         Show a translucent shortcut overlay (toggle: Cmd+Opt+/).");
+    println!("  run             Foreground window manager: overlay + functional shortcuts.");
     println!("  -h, --help      Show this help message.");
     println!();
     println!("Selectors (default: --focused):");
@@ -1049,26 +1054,21 @@ fn show_overlay() -> Result<(), AppError> {
     install_interrupt_handler();
 
     overlay::prepare_application().map_err(map_overlay_error)?;
-
-    let content = shortcut::render_plain(&shortcut::default_shortcuts());
-    let size = app::overlay::overlay_size(&content);
-
-    let active = displays::snapshot();
-    let frame = control::focused_window()
-        .and_then(|window| window.info.bounds)
-        .and_then(displays::work_area_for_window)
-        .or_else(|| display::main_display(&active).map(|display| display.usable))
-        .ok_or_else(|| AppError::OverlayFailed("no active display is available".to_string()))?;
-
-    let window =
-        overlay::OverlayWindow::create(frame, size, &content).map_err(map_overlay_error)?;
+    let window = create_overlay_window()?;
     let mut visibility = app::overlay::OverlayState::new(true);
     window.show();
 
-    let hotkey_guard = match hotkey::Hotkey::register_toggle() {
-        Ok(guard) => {
+    let toggle_bindings: Vec<_> = shortcut::default_bindings()
+        .into_iter()
+        .filter(|binding| binding.action == Action::ToggleOverlay)
+        .collect();
+    let hotkeys = match hotkey::HotkeySet::register(&toggle_bindings) {
+        Ok(set) => {
+            for failure in set.failures() {
+                eprintln!("warning: hotkey unavailable ({failure})");
+            }
             println!("Overlay shown. Press Cmd+Opt+/ to toggle, Ctrl+C to quit.");
-            Some(guard)
+            Some(set)
         }
         Err(error) => {
             eprintln!(
@@ -1082,20 +1082,217 @@ fn show_overlay() -> Result<(), AppError> {
 
     while FOREGROUND_RUNNING.load(Ordering::SeqCst) {
         overlay::pump_events(0.1);
-        if hotkey::take_toggle_request() {
-            visibility.toggle();
-            if visibility.is_visible() {
-                window.show();
-            } else {
-                window.hide();
+        if let Some(set) = &hotkeys {
+            for action in set.take_pending() {
+                if action == Action::ToggleOverlay {
+                    toggle_overlay(&window, &mut visibility);
+                }
             }
         }
     }
 
-    drop(hotkey_guard);
+    drop(hotkeys);
     drop(window);
     println!("Stopped.");
     Ok(())
+}
+
+/// Runs the foreground window manager (SPEC-008): the overlay plus the full
+/// functional shortcut set, until interrupted with Ctrl+C.
+fn run_manager() -> Result<(), AppError> {
+    if !accessibility::is_trusted() {
+        return Err(AppError::PermissionDenied);
+    }
+
+    FOREGROUND_RUNNING.store(true, Ordering::SeqCst);
+    install_interrupt_handler();
+
+    overlay::prepare_application().map_err(map_overlay_error)?;
+    let window = create_overlay_window()?;
+    let mut visibility = app::overlay::OverlayState::new(true);
+    window.show();
+
+    let bindings = shortcut::default_bindings();
+    let hotkeys = match hotkey::HotkeySet::register(&bindings) {
+        Ok(set) => {
+            for failure in set.failures() {
+                eprintln!("warning: hotkey unavailable ({failure})");
+            }
+            Some(set)
+        }
+        Err(error) => {
+            eprintln!("warning: global hotkeys unavailable ({error}); shortcuts inactive");
+            None
+        }
+    };
+
+    println!("Window manager active. Overlay shown. Ctrl+C to quit.");
+
+    while FOREGROUND_RUNNING.load(Ordering::SeqCst) {
+        overlay::pump_events(0.1);
+        if let Some(set) = &hotkeys {
+            for action in set.take_pending() {
+                execute_action(action, &window, &mut visibility);
+            }
+        }
+    }
+
+    drop(hotkeys);
+    drop(window);
+    println!("Stopped.");
+    Ok(())
+}
+
+fn create_overlay_window() -> Result<overlay::OverlayWindow, AppError> {
+    let content = shortcut::render_plain(&shortcut::default_shortcuts());
+    let size = app::overlay::overlay_size(&content);
+
+    let active = displays::snapshot();
+    let frame = control::focused_window()
+        .and_then(|window| window.info.bounds)
+        .and_then(displays::work_area_for_window)
+        .or_else(|| display::main_display(&active).map(|display| display.usable))
+        .ok_or_else(|| AppError::OverlayFailed("no active display is available".to_string()))?;
+
+    overlay::OverlayWindow::create(frame, size, &content).map_err(map_overlay_error)
+}
+
+fn toggle_overlay(window: &overlay::OverlayWindow, visibility: &mut app::overlay::OverlayState) {
+    visibility.toggle();
+    if visibility.is_visible() {
+        window.show();
+    } else {
+        window.hide();
+    }
+}
+
+/// Dispatches one hotkey action (SPEC-008).
+fn execute_action(
+    action: Action,
+    overlay_window: &overlay::OverlayWindow,
+    visibility: &mut app::overlay::OverlayState,
+) {
+    match action {
+        Action::ToggleOverlay => toggle_overlay(overlay_window, visibility),
+        Action::SetLayout(layout) => apply_layout_action(layout),
+        Action::Focus(direction) => navigate(direction, false),
+        Action::MoveWindow(direction) => navigate(direction, true),
+    }
+}
+
+/// Applies `layout` to the display containing the focused window.
+fn apply_layout_action(layout: LayoutType) {
+    let Some(focused) = control::focused_window() else {
+        eprintln!("layout: no focused window");
+        return;
+    };
+    let Some(bounds) = focused.info.bounds else {
+        eprintln!("layout: focused window has no geometry");
+        return;
+    };
+    let active = displays::snapshot();
+    let Some(target) = display_assignment::assign(&active, bounds) else {
+        eprintln!("layout: focused window is not on an active display");
+        return;
+    };
+
+    let config = LayoutConfig {
+        layout,
+        ..LayoutConfig::default()
+    };
+    let windows = control::discover_layout_windows();
+    let plan = match app::layout_planner::build_plan(&active, windows, target, config) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("layout: {error}");
+            return;
+        }
+    };
+
+    let report = app::layout_executor::execute(
+        plan,
+        &NativeBackend,
+        app::layout_executor::ExecutionMode::Apply,
+    );
+    if report.failed > 0 || report.constrained > 0 {
+        eprintln!(
+            "layout ({layout}): applied {}, constrained {}, failed {}, skipped {}",
+            report.applied, report.constrained, report.failed, report.skipped
+        );
+    }
+}
+
+/// Moves focus (`move_window == false`) or moves the focused window
+/// (`move_window == true`) to the directional neighbour on the same display.
+fn navigate(direction: Direction, move_window: bool) {
+    let Some(focused) = control::focused_window() else {
+        eprintln!("navigation: no focused window");
+        return;
+    };
+    let Some(bounds) = focused.info.bounds else {
+        eprintln!("navigation: focused window has no geometry");
+        return;
+    };
+    let active = displays::snapshot();
+    let Some(target) = display_assignment::assign(&active, bounds) else {
+        eprintln!("navigation: focused window is not on an active display");
+        return;
+    };
+
+    let mut eligible: Vec<(control::LayoutWindow, Rect)> = Vec::new();
+    for window in control::discover_layout_windows() {
+        if let Ok(rect) = app::window_eligibility::assess(&window, &active, target) {
+            eligible.push((window, rect));
+        }
+    }
+    if eligible.len() < 2 {
+        return;
+    }
+
+    eligible.sort_by(|a, b| compare_windows(a.0.info(), b.0.info()));
+    let rects: Vec<Rect> = eligible.iter().map(|(_, rect)| *rect).collect();
+    let ordered: Vec<control::LayoutWindow> =
+        eligible.into_iter().map(|(window, _)| window).collect();
+
+    let Some(current) = control::focused_index(&ordered) else {
+        eprintln!("navigation: focused window not found among eligible windows");
+        return;
+    };
+    let Some(neighbor) = navigation::directional_neighbor(&rects, current, direction) else {
+        return;
+    };
+
+    if move_window {
+        move_to_neighbor(&ordered, &rects, current, neighbor);
+    } else {
+        focus_neighbor(&ordered, neighbor);
+    }
+}
+
+fn focus_neighbor(ordered: &[control::LayoutWindow], neighbor: usize) {
+    let window = &ordered[neighbor];
+    if let Err(error) = control::focus_window(&window.handle, window.info.pid) {
+        eprintln!("focus: {error}");
+    }
+    if let Err(error) = control::activate_application(window.info.pid) {
+        eprintln!("focus: {error}");
+    }
+}
+
+fn move_to_neighbor(
+    ordered: &[control::LayoutWindow],
+    rects: &[Rect],
+    current: usize,
+    neighbor: usize,
+) {
+    let current_rect = rects[current];
+    let neighbor_rect = rects[neighbor];
+    if let Err(error) = control::set_bounds(&ordered[current].handle, neighbor_rect) {
+        eprintln!("move window: {error}");
+    }
+    if let Err(error) = control::set_bounds(&ordered[neighbor].handle, current_rect) {
+        eprintln!("move window: {error}");
+    }
 }
 
 fn map_overlay_error(error: overlay::OverlayError) -> AppError {

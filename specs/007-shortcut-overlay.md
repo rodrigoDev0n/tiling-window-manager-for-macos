@@ -3,12 +3,12 @@
 **Status:** Approved  
 **Priority:** Medium  
 **Dependencies:** SPEC-001 (accessibility permission plumbing), SPEC-006 (run-loop/observation foundations)  
-**Integration:** SPEC-008 — Automatic Tiling (renumbered from the former SPEC-007)  
-**Next:** SPEC-008 — Automatic Tiling
+**Integration:** SPEC-008 — Shortcut Actions (renumbered from the former SPEC-007 slot usage)  
+**Next:** SPEC-008 — Shortcut Actions; automatic tiling is SPEC-009
 
 > **Note on numbering.** SPEC-006 previously reserved "SPEC-007" for Automatic
-> Tiling. This specification takes the SPEC-007 slot and Automatic Tiling is
-> renumbered to SPEC-008.
+> Tiling. SPEC-007 takes that slot; SPEC-008 introduces actionable shortcuts;
+> Automatic Tiling is renumbered to SPEC-009.
 
 ## 1. Objective
 

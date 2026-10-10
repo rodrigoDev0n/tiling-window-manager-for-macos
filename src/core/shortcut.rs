@@ -1,8 +1,12 @@
-//! Platform-independent shortcut reference model (SPEC-007).
+//! Platform-independent shortcut reference model (SPEC-007, SPEC-008).
 //!
-//! The shortcut list is informational data consumed by the overlay renderer.
-//! No shortcuts described here are executed by this module; execution is out
-//! of scope for SPEC-007.
+//! This module is the single source of truth for the shortcut set: the
+//! [`Binding`] table drives both the overlay reference (`default_shortcuts`)
+//! and the registered global hotkeys, so the displayed list and the executed
+//! actions never diverge. The module contains no AppKit or Carbon types.
+
+use crate::core::action::{Action, Direction};
+use crate::core::layout::LayoutType;
 
 /// A single display-ready keyboard shortcut entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,70 +24,197 @@ pub struct ShortcutGroup {
     pub shortcuts: Vec<Shortcut>,
 }
 
-/// Returns the default shortcut reference set.
+/// A logical key, independent of a specific keyboard layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Key {
+    /// A character key (for example `'m'` or `'/'`).
+    Char(char),
+    /// Arrow keys.
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// The non-character modifier set of a shortcut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Modifiers {
+    pub command: bool,
+    pub option: bool,
+    pub shift: bool,
+}
+
+impl Modifiers {
+    /// `⌘⌥`.
+    pub const fn command_option() -> Self {
+        Self {
+            command: true,
+            option: true,
+            shift: false,
+        }
+    }
+
+    /// `⌘⌥⇧`.
+    pub const fn command_option_shift() -> Self {
+        Self {
+            command: true,
+            option: true,
+            shift: true,
+        }
+    }
+}
+
+/// One bindable shortcut: the logical key, modifiers, executed action, and the
+/// description shown in the overlay reference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Binding {
+    pub key: Key,
+    pub modifiers: Modifiers,
+    pub action: Action,
+    pub description: String,
+}
+
+/// The default, functional shortcut set (SPEC-008 FR-008).
 ///
-/// The set is informational and reflects the intended roadmap. Only the
-/// overlay toggle (`⌘⌥/`) is functional in SPEC-007.
-pub fn default_shortcuts() -> Vec<ShortcutGroup> {
+/// Only actions this build can execute are listed; roadmap-only entries (BSP,
+/// floating, swap-with-master, quit) are intentionally absent so the overlay
+/// never advertises a shortcut that does nothing.
+pub fn default_bindings() -> Vec<Binding> {
+    let cmd_opt = Modifiers::command_option();
+    let cmd_opt_shift = Modifiers::command_option_shift();
     vec![
-        ShortcutGroup {
-            title: "Overlay".to_string(),
-            shortcuts: vec![Shortcut {
-                keys: "⌘⌥/".to_string(),
-                description: "Show or hide this overlay".to_string(),
-            }],
+        Binding {
+            key: Key::Char('/'),
+            modifiers: cmd_opt,
+            action: Action::ToggleOverlay,
+            description: "Show or hide this overlay".to_string(),
         },
-        ShortcutGroup {
-            title: "Layouts".to_string(),
-            shortcuts: vec![
-                Shortcut {
-                    keys: "⌘⌥M".to_string(),
-                    description: "Monocle layout".to_string(),
-                },
-                Shortcut {
-                    keys: "⌘⌥S".to_string(),
-                    description: "Master/Stack layout".to_string(),
-                },
-                Shortcut {
-                    keys: "⌘⌥C".to_string(),
-                    description: "Columns layout".to_string(),
-                },
-                Shortcut {
-                    keys: "⌘⌥R".to_string(),
-                    description: "Rows layout".to_string(),
-                },
-                Shortcut {
-                    keys: "⌘⌥B".to_string(),
-                    description: "BSP layout".to_string(),
-                },
-            ],
+        Binding {
+            key: Key::Char('m'),
+            modifiers: cmd_opt,
+            action: Action::SetLayout(LayoutType::Monocle),
+            description: "Monocle layout".to_string(),
         },
-        ShortcutGroup {
-            title: "Focus and Windows".to_string(),
-            shortcuts: vec![
-                Shortcut {
-                    keys: "⌘⌥←/→/↑/↓".to_string(),
-                    description: "Move focus".to_string(),
-                },
-                Shortcut {
-                    keys: "⌘⌥⇧←/→".to_string(),
-                    description: "Move window".to_string(),
-                },
-                Shortcut {
-                    keys: "⌘⌥Return".to_string(),
-                    description: "Swap with master".to_string(),
-                },
-                Shortcut {
-                    keys: "⌘⌥F".to_string(),
-                    description: "Toggle floating".to_string(),
-                },
-                Shortcut {
-                    keys: "⌘⌥Q".to_string(),
-                    description: "Quit".to_string(),
-                },
-            ],
+        Binding {
+            key: Key::Char('s'),
+            modifiers: cmd_opt,
+            action: Action::SetLayout(LayoutType::MasterStack),
+            description: "Master/Stack layout".to_string(),
+        },
+        Binding {
+            key: Key::Char('c'),
+            modifiers: cmd_opt,
+            action: Action::SetLayout(LayoutType::Columns),
+            description: "Columns layout".to_string(),
+        },
+        Binding {
+            key: Key::Char('r'),
+            modifiers: cmd_opt,
+            action: Action::SetLayout(LayoutType::Rows),
+            description: "Rows layout".to_string(),
+        },
+        Binding {
+            key: Key::Left,
+            modifiers: cmd_opt,
+            action: Action::Focus(Direction::Left),
+            description: "Move focus left".to_string(),
+        },
+        Binding {
+            key: Key::Right,
+            modifiers: cmd_opt,
+            action: Action::Focus(Direction::Right),
+            description: "Move focus right".to_string(),
+        },
+        Binding {
+            key: Key::Up,
+            modifiers: cmd_opt,
+            action: Action::Focus(Direction::Up),
+            description: "Move focus up".to_string(),
+        },
+        Binding {
+            key: Key::Down,
+            modifiers: cmd_opt,
+            action: Action::Focus(Direction::Down),
+            description: "Move focus down".to_string(),
+        },
+        Binding {
+            key: Key::Left,
+            modifiers: cmd_opt_shift,
+            action: Action::MoveWindow(Direction::Left),
+            description: "Move window left".to_string(),
+        },
+        Binding {
+            key: Key::Right,
+            modifiers: cmd_opt_shift,
+            action: Action::MoveWindow(Direction::Right),
+            description: "Move window right".to_string(),
         },
     ]
+}
+
+/// Renders the key combination of `binding` as a display string, for example
+/// `⌘⌥M` or `⌘⌥⇧←`.
+pub fn format_binding(binding: &Binding) -> String {
+    let mut keys = String::new();
+    if binding.modifiers.command {
+        keys.push('⌘');
+    }
+    if binding.modifiers.option {
+        keys.push('⌥');
+    }
+    if binding.modifiers.shift {
+        keys.push('⇧');
+    }
+    keys.push_str(&format_key(binding.key));
+    keys
+}
+
+fn format_key(key: Key) -> String {
+    match key {
+        Key::Char(character) => character.to_ascii_uppercase().to_string(),
+        Key::Up => "↑".to_string(),
+        Key::Down => "↓".to_string(),
+        Key::Left => "←".to_string(),
+        Key::Right => "→".to_string(),
+    }
+}
+
+/// Returns the overlay shortcut reference grouped by purpose, derived from
+/// [`default_bindings`].
+pub fn default_shortcuts() -> Vec<ShortcutGroup> {
+    let bindings = default_bindings();
+    vec![
+        shortcut_group(
+            "Overlay",
+            bindings
+                .iter()
+                .filter(|b| b.action == Action::ToggleOverlay),
+        ),
+        shortcut_group(
+            "Layouts",
+            bindings
+                .iter()
+                .filter(|b| matches!(b.action, Action::SetLayout(_))),
+        ),
+        shortcut_group(
+            "Focus and Windows",
+            bindings
+                .iter()
+                .filter(|b| matches!(b.action, Action::Focus(_) | Action::MoveWindow(_))),
+        ),
+    ]
+}
+
+fn shortcut_group<'a>(title: &str, bindings: impl Iterator<Item = &'a Binding>) -> ShortcutGroup {
+    ShortcutGroup {
+        title: title.to_string(),
+        shortcuts: bindings
+            .map(|binding| Shortcut {
+                keys: format_binding(binding),
+                description: binding.description.clone(),
+            })
+            .collect(),
+    }
 }
 
 /// Renders the groups as monospaced-friendly plain text, one row per shortcut.
@@ -127,6 +258,86 @@ mod tests {
         let groups = default_shortcuts();
         assert!(!groups.is_empty());
         assert!(groups.iter().all(|group| !group.shortcuts.is_empty()));
+    }
+
+    #[test]
+    fn default_bindings_cover_the_action_families() {
+        let bindings = default_bindings();
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| b.action == Action::ToggleOverlay)
+                .count(),
+            1
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| matches!(b.action, Action::SetLayout(_)))
+                .count(),
+            4
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| matches!(b.action, Action::Focus(_)))
+                .count(),
+            4
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| matches!(b.action, Action::MoveWindow(_)))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn default_bindings_have_no_duplicate_key_combinations() {
+        let bindings = default_bindings();
+        let mut combos: Vec<(&Key, Modifiers)> =
+            bindings.iter().map(|b| (&b.key, b.modifiers)).collect();
+        combos.sort_by(|a, b| format!("{:?}{:?}", a.0, a.1).cmp(&format!("{:?}{:?}", b.0, b.1)));
+        for pair in combos.windows(2) {
+            assert_ne!(pair[0], pair[1], "duplicate key combination");
+        }
+    }
+
+    #[test]
+    fn overlay_entries_are_derived_from_bindings() {
+        let bindings = default_bindings();
+        let overlay_entries = default_shortcuts()
+            .into_iter()
+            .flat_map(|group| group.shortcuts);
+
+        let expected: std::collections::HashSet<(String, String)> = bindings
+            .iter()
+            .map(|b| (format_binding(b), b.description.clone()))
+            .collect();
+        let actual: std::collections::HashSet<(String, String)> =
+            overlay_entries.map(|s| (s.keys, s.description)).collect();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn format_binding_renders_modifier_glyphs() {
+        let binding = Binding {
+            key: Key::Char('m'),
+            modifiers: Modifiers::command_option(),
+            action: Action::SetLayout(LayoutType::Monocle),
+            description: String::new(),
+        };
+        assert_eq!(format_binding(&binding), "⌘⌥M");
+
+        let shift = Binding {
+            key: Key::Left,
+            modifiers: Modifiers::command_option_shift(),
+            action: Action::MoveWindow(Direction::Left),
+            description: String::new(),
+        };
+        assert_eq!(format_binding(&shift), "⌘⌥⇧←");
     }
 
     #[test]
