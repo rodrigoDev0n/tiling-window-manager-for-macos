@@ -1,127 +1,141 @@
-# tiling_window
+<div align="center">
 
-A native, event-driven tiling window manager for macOS written in Rust.
+# Tiling Window
 
-`tiling_window` discovers application windows through the macOS Accessibility
-API, arranges them with a platform-independent layout engine, and keeps every
-display tiled automatically as windows open, close, move, or change state — all
-without polling, background daemons, or private Apple APIs.
+### Gestor de ventanas de mosaico para macOS, escrito en Rust
 
-The project is built incrementally under a Spec-Driven Development workflow.
-Specifications are the source of truth for behavior; see [`AGENTS.md`](AGENTS.md)
-for engineering conventions and [`specs/`](specs/README.md) for the full index.
+Gestión automática de ventanas nativa, ligera y basada en eventos.
 
-## Features
+[![Rust](https://img.shields.io/badge/Rust-edition%202024-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Platform](https://img.shields.io/badge/macOS-11.0%2B-000000?logo=apple&logoColor=white)](https://www.apple.com/macos/)
+[![Licencia](https://img.shields.io/badge/licencia-por%20definir-lightgrey)](#-licencia)
+[![Especificaciones](https://img.shields.io/badge/SDD-spec--driven-blue)](specs/README.md)
 
-- **Native macOS integration** — public Accessibility, Core Graphics, and AppKit
-  APIs only. No private frameworks.
-- **Automatic tiling** — the foreground manager re-tiles each affected display
-  when windows or applications change, with debounced, idempotent, convergent
-  updates.
-- **Multiple layouts** — master/stack, columns, rows, and monocle.
-- **Per-display state** — every active display keeps its own persistent tiling
-  order and layout configuration for the lifetime of the process.
-- **Global shortcuts** — functional hotkeys plus a translucent shortcut overlay.
-- **Event-driven** — a bounded foreground run loop consumes normalized window
-  and application events; no threads, timers, or async runtime.
-- **Platform-independent core** — layout algorithms and the tiling controller
-  contain no macOS types and are fully unit-testable.
+</div>
 
-## Requirements
+---
 
-- macOS 11.0 or later.
-- Rust stable toolchain (edition 2024).
-- **Accessibility permission** granted to the running binary or the installed
-  `.app` bundle.
+`tiling_window` descubre las ventanas de las aplicaciones a través de la API de
+Accesibilidad de macOS, las organiza con un motor de *layout* independiente de la
+plataforma y mantiene cada pantalla en mosaico automáticamente cuando las
+ventanas se abren, cierran, mueven o cambian de estado — sin sondeo, sin demonios
+en segundo plano y sin APIs privadas de Apple.
 
-## Build
+El proyecto se construye de forma incremental bajo un flujo de **Desarrollo
+Guiado por Especificaciones (SDD)**. Las especificaciones son la fuente de verdad
+del comportamiento; consulta [`AGENTS.md`](AGENTS.md) para las convenciones de
+ingeniería y [`specs/`](specs/README.md) para el índice completo.
+
+## Características
+
+| Característica | Descripción |
+| --- | --- |
+| **Integración nativa con macOS** | Solo APIs públicas de Accesibilidad, Core Graphics y AppKit. Sin frameworks privados. |
+| **Mosaico automático** | El gestor vuelve a organizar cada pantalla afectada cuando cambian ventanas o aplicaciones, con actualizaciones *debounced*, idempotentes y convergentes. |
+| **Múltiples diseños** | Master/Stack, columnas, filas y monocle. |
+| **Estado por pantalla** | Cada pantalla activa conserva su propio orden de mosaico y configuración de diseño durante la vida del proceso. |
+| **Atajos globales** | Teclas de acceso rápido funcionales y una superposición translúcida de atajos. |
+| **Basado en eventos** | Un bucle en primer plano consume eventos normalizados de ventanas y aplicaciones; sin hilos, temporizadores ni runtime asíncrono. |
+| **Núcleo independiente** | Los algoritmos de diseño y el controlador de mosaico no contienen tipos de macOS y son totalmente testeables. |
+
+## Requisitos
+
+- **macOS 11.0** o superior.
+- Toolchain estable de **Rust** (edition 2024).
+- **Permiso de Accesibilidad** concedido al binario en ejecución o al paquete
+  `.app` instalado.
+
+## Compilación
 
 ```sh
 cargo build --release
 ```
 
-The release binary is produced at `target/release/tiling_window`.
+El binario de release se genera en `target/release/tiling_window`.
 
-## Install as a login agent (optional)
+## Instalación como agente de inicio de sesión (opcional)
 
-`scripts/install-agent.sh` packages the release binary as a signed
-`TilingWindow.app` bundle and installs a per-user `LaunchAgent` so it starts at
-login:
+`scripts/install-agent.sh` empaqueta el binario de release como un paquete
+`TilingWindow.app` firmado e instala un `LaunchAgent` por usuario para que se
+inicie al iniciar sesión:
 
 ```sh
 ./scripts/install-agent.sh
 ```
 
-The script builds the release binary if needed, code-signs the bundle with a
-stable self-signed identity (so the Accessibility grant survives rebuilds), and
-registers the agent under `~/Library/LaunchAgents`. Signing material is stored
-outside the repository, under `~/Library/Application Support/tiling-window`.
+El script compila el binario si es necesario, firma el paquete con una identidad
+autofirmada estable (para que el permiso de Accesibilidad sobreviva a las
+recompilaciones) y registra el agente en `~/Library/LaunchAgents`. El material de
+firma se guarda fuera del repositorio, en
+`~/Library/Application Support/tiling-window`.
 
-To remove it:
+Para eliminarlo:
 
 ```sh
 ./scripts/uninstall-agent.sh
 ```
 
-## Accessibility permission
+## Permiso de Accesibilidad
 
-Window inspection, movement, and observation all require Accessibility access.
-The `permissions` command reports the current status and prints instructions:
+La inspección, el movimiento y la observación de ventanas requieren acceso de
+Accesibilidad. El comando `permissions` informa el estado actual e imprime
+instrucciones:
 
 ```sh
 cargo run -- permissions
 ```
 
-Grant it manually under **System Settings → Privacy & Security → Accessibility**
-by enabling the entry for the program (or adding it with `+`). After a rebuild
-you may need to toggle the entry off and on again.
+Concédelo manualmente en **Ajustes del Sistema → Privacidad y seguridad →
+Accesibilidad**, activando la entrada del programa (o añadiéndola con `+`).
+Después de una recompilación es posible que debas desactivar y volver a activar
+la entrada.
 
-## Usage
+## Uso
 
 ```sh
-cargo run -- <command> [options]
+cargo run -- <comando> [opciones]
 ```
 
-Run `cargo run -- --help` (or with no arguments) to print the full command and
-selector reference.
+Ejecuta `cargo run -- --help` (o sin argumentos) para imprimir la referencia
+completa de comandos y selectores.
 
-### Commands
+### Comandos
 
-| Command | Description |
+| Comando | Descripción |
 | --- | --- |
-| `permissions` | Report Accessibility authorization status. |
-| `windows` | List accessible windows of running applications. |
-| `move` | Move/resize a window to an absolute or predefined geometry. |
-| `focus` | Focus (raise) a window. |
-| `displays` | List active displays and their geometry. |
-| `display-info <id>` | Show detailed geometry for one display. |
-| `layout` | Preview a tiling layout without changing windows. |
-| `apply <layout>` | Apply a tiling layout to windows on a display. |
-| `watch` | Monitor window events until interrupted (Ctrl+C). |
-| `overlay` | Show a translucent shortcut overlay (toggle: `⌘⌥-`). |
-| `run [--no-auto]` | Foreground window manager: overlay, shortcuts, automatic tiling. |
-| `-h`, `--help` | Show help. |
+| `permissions` | Informa el estado de autorización de Accesibilidad. |
+| `windows` | Lista las ventanas accesibles de las aplicaciones en ejecución. |
+| `move` | Mueve/redimensiona una ventana a una geometría absoluta o predefinida. |
+| `focus` | Enfoca (eleva) una ventana. |
+| `displays` | Lista las pantallas activas y su geometría. |
+| `display-info <id>` | Muestra la geometría detallada de una pantalla. |
+| `layout` | Previsualiza un diseño de mosaico sin cambiar ventanas. |
+| `apply <layout>` | Aplica un diseño de mosaico a las ventanas de una pantalla. |
+| `watch` | Monitoriza eventos de ventanas hasta interrumpir (Ctrl+C). |
+| `overlay` | Muestra una superposición translúcida de atajos (alternar: `⌘⌥-`). |
+| `run [--no-auto]` | Gestor de ventanas en primer plano: overlay, atajos y mosaico automático. |
+| `-h`, `--help` | Muestra la ayuda. |
 
-### Window selectors
+### Selectores de ventana
 
-Selectors default to `--focused`.
+Los selectores usan `--focused` por defecto.
 
-| Selector | Description |
+| Selector | Descripción |
 | --- | --- |
-| `--focused` | The focused window of the frontmost application. |
-| `--pid <PID>` | Restrict to a process. |
-| `--app <NAME>` | Restrict to an application name. |
-| `--title <SUBSTRING>` | Restrict to a title substring. |
-| `--index <N>` | Pick the N-th match in a deterministic order. |
+| `--focused` | La ventana enfocada de la aplicación en primer plano. |
+| `--pid <PID>` | Restringe a un proceso. |
+| `--app <NAME>` | Restringe a un nombre de aplicación. |
+| `--title <SUBSTRING>` | Restringe a una subcadena del título. |
+| `--index <N>` | Elige la N-ésima coincidencia en un orden determinista. |
 
-### `move` geometry
+### Geometría de `move`
 
 ```sh
 cargo run -- move --x <f64> --y <f64> --width <f64> --height <f64>
 cargo run -- move --to <left|right|maximize|center>
 ```
 
-### `layout` and `apply` options
+### Opciones de `layout` y `apply`
 
 ```sh
 cargo run -- layout --layout <masterstack|columns|rows|monocle> [--display <id>] \
@@ -130,123 +144,129 @@ cargo run -- layout --layout <masterstack|columns|rows|monocle> [--display <id>]
 cargo run -- apply <masterstack|columns|rows|monocle> [--display <id>] [--dry-run]
 ```
 
-### Foreground manager
+### Gestor en primer plano
 
 ```sh
-cargo run -- run          # overlay + shortcuts + automatic tiling (default)
-cargo run -- run --no-auto # overlay + shortcuts only (no automatic layout)
+cargo run -- run           # overlay + atajos + mosaico automático (por defecto)
+cargo run -- run --no-auto # solo overlay + atajos (sin diseño automático)
 ```
 
-`run` stays in the foreground until Ctrl+C, pumping AppKit events, draining
-hotkey actions and observer events, and re-tiling displays the controller
-reports as ready. All other commands keep working independently.
+`run` permanece en primer plano hasta Ctrl+C, bombeando eventos de AppKit,
+drenando acciones de atajos y eventos de observadores, y reorganizando las
+pantallas que el controlador reporta como listas. Todos los demás comandos
+siguen funcionando de forma independiente.
 
-## Keyboard shortcuts
+## Atajos de teclado
 
-Shortcuts are defined in a single binding table (`src/core/shortcut.rs`) that
-drives both the overlay reference and the registered global hotkeys, so the
-displayed list and the executed actions never diverge.
+Los atajos se definen en una única tabla de enlaces (`src/core/shortcut.rs`) que
+alimenta tanto la referencia del overlay como los atajos globales registrados, de
+modo que la lista mostrada y las acciones ejecutadas nunca divergen.
 
-| Shortcut | Action |
+| Atajo | Acción |
 | --- | --- |
-| `⌘⌥-` | Show or hide the overlay |
-| `⌘⌥S` | Master/Stack layout |
-| `⌘⌥C` | Columns layout |
-| `⌘⌥R` | Rows layout |
-| `⌘⌥M` | Monocle layout |
-| `⌘⌥←/→/↑/↓` | Move focus |
-| `⌘⌥⇧←/→` | Reorder the focused window and re-tile |
+| `⌘⌥-` | Mostrar u ocultar el overlay |
+| `⌘⌥S` | Diseño Master/Stack |
+| `⌘⌥C` | Diseño en columnas |
+| `⌘⌥R` | Diseño en filas |
+| `⌘⌥M` | Diseño monocle |
+| `⌘⌥←/→/↑/↓` | Mover el foco |
+| `⌘⌥⇧←/→` | Reordenar la ventana enfocada y reorganizar |
 
-## Layouts
+## Diseños
 
-| Layout | Behavior |
+| Diseño | Comportamiento |
 | --- | --- |
-| `masterstack` | A left-hand master column plus a right-hand stack column. |
-| `columns` | Equal-width vertical columns. |
-| `rows` | Equal-height horizontal rows. |
-| `monocle` | All windows share the full usable area. |
+| `masterstack` | Una columna maestra a la izquierda más una pila a la derecha. |
+| `columns` | Columnas verticales de ancho igual. |
+| `rows` | Filas horizontales de alto igual. |
+| `monocle` | Todas las ventanas comparten el área útil completa. |
 
-The default `LayoutConfig` is `masterstack` with `outer_gap = 8.0`,
-`inner_gap = 8.0`, `master_ratio = 0.55`, and `master_count = 1`.
+La `LayoutConfig` por defecto es `masterstack` con `outer_gap = 8.0`,
+`inner_gap = 8.0`, `master_ratio = 0.55` y `master_count = 1`.
 
-## How it works
+## Cómo funciona
 
-1. **Discovery** — accessible, controllable windows are discovered through the
-   Accessibility API together with a stable runtime identity (`WindowKey` =
-   process id + runtime window id).
-2. **Event system** — observers normalize application and window lifecycle
-   changes into platform-independent domain events and maintain a runtime
-   registry. Geometry events are coalesced.
-3. **Tiling controller** — a per-display tiling order is seeded on startup and
-   kept stable: new windows append, destroyed windows are removed, and only
-   explicit reordering changes the order. Title, geometry, and focus changes
-   never reshuffle it.
-4. **Debounced re-tiling** — dirty displays are re-tiled after a settle interval
-   (default 150 ms). Programmatic geometry changes are matched against the
-   geometry macOS actually applied and suppressed, which prevents feedback loops
-   and guarantees convergence for constrained windows.
-5. **Layout engine** — pure, platform-independent algorithms turn a work area
-   plus an ordered window collection into deterministic target rectangles.
-6. **Execution** — target rectangles are applied through the Accessibility API;
-   windows already within the geometry tolerance are skipped.
+1. **Descubrimiento** — las ventanas accesibles y controlables se descubren a
+   través de la API de Accesibilidad junto con una identidad de runtime estable
+   (`WindowKey` = id de proceso + id de ventana de runtime).
+2. **Sistema de eventos** — los observadores normalizan los cambios de ciclo de
+   vida de aplicaciones y ventanas en eventos de dominio independientes de la
+   plataforma y mantienen un registro de runtime. Los eventos de geometría se
+   fusionan.
+3. **Controlador de mosaico** — se siembra un orden de mosaico por pantalla al
+   arrancar y se mantiene estable: las ventanas nuevas se añaden al final, las
+   destruidas se eliminan y solo un reordenamiento explícito cambia el orden. Los
+   cambios de título, geometría y foco nunca lo reordenan.
+4. **Reorganización con debounce** — las pantallas sucias se reorganizan tras un
+   intervalo de asentamiento (150 ms por defecto). Los cambios de geometría
+   programáticos se comparan con la geometría que macOS aplicó realmente y se
+   suprimen, lo que evita bucles de retroalimentación y garantiza la convergencia
+   en ventanas restringidas.
+5. **Motor de diseño** — algoritmos puros e independientes de la plataforma
+   convierten un área de trabajo más una colección ordenada de ventanas en
+   rectángulos objetivo deterministas.
+6. **Ejecución** — los rectángulos objetivo se aplican a través de la API de
+   Accesibilidad; las ventanas que ya están dentro de la tolerancia de geometría
+   se omiten.
 
-## Architecture
+## Arquitectura
 
 ```
 src/
-├── main.rs                 # Entry point, command dispatch, exit codes
-├── app/                    # Foreground manager, tiling controller, overlay
-│   ├── tiling.rs           # Automatic tiling controller / dirty policy
-│   ├── event_processor.rs  # Event normalization and coalescing
-│   ├── registry.rs         # Runtime window registry
-│   ├── layout_planner.rs   # Builds layout plans from state
-│   ├── layout_executor.rs  # Applies plans, records expected geometry
-│   ├── overlay.rs          # Overlay content/state
+├── main.rs                 # Punto de entrada, despacho de comandos, códigos de salida
+├── app/                    # Gestor en primer plano, controlador de mosaico, overlay
+│   ├── tiling.rs           # Controlador de mosaico automático / política de suciedad
+│   ├── event_processor.rs  # Normalización y fusión de eventos
+│   ├── registry.rs         # Registro de ventanas de runtime
+│   ├── layout_planner.rs   # Construye planes de diseño a partir del estado
+│   ├── layout_executor.rs  # Aplica planes, registra la geometría esperada
+│   ├── overlay.rs          # Contenido/estado del overlay
 │   └── ...
-├── platform/macos/         # All AppKit / Carbon / Accessibility code
-│   ├── accessibility.rs    # Permission checks, AX helpers
-│   ├── applications.rs     # NSRunningApplication helpers
-│   ├── displays.rs         # Display discovery and geometry
-│   ├── windows.rs          # Window discovery
-│   ├── control.rs          # Window move/resize
-│   ├── observers.rs        # Native event observers
-│   ├── hotkey.rs           # Global hotkey registration
-│   ├── overlay.rs          # Overlay NSWindow
-│   └── core_graphics.rs    # Core Graphics bindings
-├── core/                   # Platform-independent domain models
-│   ├── action.rs           # Actions and directions
-│   ├── coordinates.rs      # Coordinate systems
-│   ├── display*.rs         # Display model and assignment
-│   ├── event.rs            # Domain events and WindowKey
-│   ├── geometry.rs         # Rect / Size primitives
-│   ├── layout*.rs          # Layout config, plan, execution report
-│   ├── navigation.rs       # Directional neighbour search
-│   ├── selector.rs         # Window selection and ordering
-│   ├── shortcut.rs         # Binding table (overlay + hotkeys)
-│   └── window.rs           # Window identifiers and metadata
-├── layouts/                # Pure layout algorithms
+├── platform/macos/         # Todo el código de AppKit / Carbon / Accesibilidad
+│   ├── accessibility.rs    # Comprobación de permisos, helpers de AX
+│   ├── applications.rs     # Helpers de NSRunningApplication
+│   ├── displays.rs         # Descubrimiento y geometría de pantallas
+│   ├── windows.rs          # Descubrimiento de ventanas
+│   ├── control.rs          # Mover/redimensionar ventanas
+│   ├── observers.rs        # Observadores de eventos nativos
+│   ├── hotkey.rs           # Registro de atajos globales
+│   ├── overlay.rs          # NSWindow del overlay
+│   └── core_graphics.rs    # Enlaces de Core Graphics
+├── core/                   # Modelos de dominio independientes de la plataforma
+│   ├── action.rs           # Acciones y direcciones
+│   ├── coordinates.rs      # Sistemas de coordenadas
+│   ├── display*.rs         # Modelo y asignación de pantallas
+│   ├── event.rs            # Eventos de dominio y WindowKey
+│   ├── geometry.rs         # Primitivas Rect / Size
+│   ├── layout*.rs          # Config de diseño, plan, informe de ejecución
+│   ├── navigation.rs       # Búsqueda direccional de vecinos
+│   ├── selector.rs         # Selección y ordenación de ventanas
+│   ├── shortcut.rs         # Tabla de enlaces (overlay + atajos)
+│   └── window.rs           # Identificadores y metadatos de ventanas
+├── layouts/                # Algoritmos de diseño puros
 │   ├── master_stack.rs
 │   ├── columns.rs
 │   ├── rows.rs
 │   └── monocle.rs
-├── commands/               # CLI parsing and dispatch
-├── error.rs                # Application error types
+├── commands/               # Parseo y despacho de CLI
+├── error.rs                # Tipos de error de la aplicación
 └── ...
 ```
 
-**Architectural rules**
+**Reglas arquitectónicas**
 
-- `core` never depends on macOS APIs; layout algorithms operate on
-  platform-independent geometry.
-- All AppKit, Carbon, and Accessibility code stays inside `platform/macos`,
-  behind safe Rust abstractions.
-- Commands decide *what* to do; the platform layer performs the native work.
-- AppKit/Carbon/AX calls happen on the main thread only; no manual `Send`/`Sync`
-  for native handles.
+- `core` nunca depende de APIs de macOS; los algoritmos de diseño operan sobre
+  geometría independiente de la plataforma.
+- Todo el código de AppKit, Carbon y Accesibilidad permanece dentro de
+  `platform/macos`, tras abstracciones seguras de Rust.
+- Los comandos deciden *qué* hacer; la capa de plataforma realiza el trabajo
+  nativo.
+- Las llamadas a AppKit/Carbon/AX ocurren solo en el hilo principal; sin
+  `Send`/`Sync` manuales para handles nativos.
 
-## Development
+## Desarrollo
 
-Before considering a change complete, run:
+Antes de considerar un cambio finalizado, ejecuta:
 
 ```sh
 cargo fmt --all -- --check
@@ -255,49 +275,63 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets
 ```
 
-For release validation:
+Para validación de release:
 
 ```sh
 cargo build --release
 ```
 
-All platform-independent logic (geometry, layouts, tiling order and policy,
-selectors, configuration validation) is covered by unit tests that do not
-require Accessibility permissions.
+Toda la lógica independiente de la plataforma (geometría, diseños, orden y
+política de mosaico, selectores, validación de configuración) está cubierta por
+pruebas unitarias que no requieren permisos de Accesibilidad.
 
-## Specifications
+## Especificaciones
 
-Feature behavior is defined by specification. Read the relevant spec in full
-before implementing.
+El comportamiento de cada funcionalidad está definido por especificación. Lee la
+especificación relevante completa antes de implementar.
 
-| Spec | Title | Status |
+| Spec | Título | Estado |
 | --- | --- | --- |
-| [SPEC-001](specs/001-windows-discovery.md) | Window discovery | Draft |
-| [SPEC-002](specs/002-native-macos-window-control.md) | Native macOS window control | Draft |
-| [SPEC-003](specs/003-native-macos-display-management.md) | Native macOS display management | Draft |
-| [SPEC-004](specs/004-platform-independent-layout-engine.md) | Platform-independent layout engine | Draft |
-| [SPEC-005](specs/005-native-layout.md) | Native layout application | Draft |
-| [SPEC-006](specs/006-windows-event-system.md) | Window event system | Approved |
-| [SPEC-007](specs/007-shortcut-overlay.md) | Shortcut overlay window | Approved |
-| [SPEC-008](specs/008-shortcut-actions.md) | Shortcut actions | Implemented |
-| [SPEC-009](specs/009-automatic-tiling.md) | Automatic tiling | Implemented |
+| [SPEC-001](specs/001-windows-discovery.md) | Descubrimiento de ventanas | Borrador |
+| [SPEC-002](specs/002-native-macos-window-control.md) | Control nativo de ventanas en macOS | Borrador |
+| [SPEC-003](specs/003-native-macos-display-management.md) | Gestión nativa de pantallas en macOS | Borrador |
+| [SPEC-004](specs/004-platform-independent-layout-engine.md) | Motor de diseño independiente de la plataforma | Borrador |
+| [SPEC-005](specs/005-native-layout.md) | Aplicación nativa del diseño | Borrador |
+| [SPEC-006](specs/006-windows-event-system.md) | Sistema de eventos de ventanas | Aprobada |
+| [SPEC-007](specs/007-shortcut-overlay.md) | Ventana de superposición de atajos | Aprobada |
+| [SPEC-008](specs/008-shortcut-actions.md) | Acciones de atajos | Implementada |
+| [SPEC-009](specs/009-automatic-tiling.md) | Mosaico automático | Implementada |
 
-See [`specs/README.md`](specs/README.md) for numbering and supersession notes.
+Consulta [`specs/README.md`](specs/README.md) para notas de numeración y
+sustitución.
 
-## Limitations
+## Limitaciones
 
-- macOS does not expose unrestricted window management through public APIs.
-  Some applications do not support programmatic resizing, and system windows may
-  not be manageable.
-- Fullscreen windows require special handling and are not tiled.
-- Multi-Space behavior is limited by public macOS APIs; Spaces are not managed.
-- Accessibility permission must be granted explicitly and can be lost when the
-  binary is rebuilt (re-grant, or use the signed `.app` bundle).
-- Tiling order and layout state are runtime-only and are not persisted across
-  `run` invocations.
+- macOS no expone una gestión de ventanas sin restricciones a través de APIs
+  públicas. Algunas aplicaciones no admiten redimensionamiento programático y las
+  ventanas del sistema pueden no ser gestionables.
+- Las ventanas en pantalla completa requieren un manejo especial y no se
+  organizan en mosaico.
+- El comportamiento multi-Space está limitado por las APIs públicas de macOS; los
+  Spaces no se gestionan.
+- El permiso de Accesibilidad debe concederse explícitamente y puede perderse al
+  recompilar el binario (vuelve a concederlo o usa el paquete `.app` firmado).
+- El orden de mosaico y el estado del diseño son solo de runtime y no persisten
+  entre invocaciones de `run`.
 
 ## Roadmap
 
-- SPEC-010 — Floating windows and per-application rules (not defined yet).
-- BSP layout, cross-display window movement, config files, and animation
-  improvements (see SPEC-009 §15, Out of Scope).
+- **SPEC-010** — Ventanas flotantes y reglas por aplicación (aún sin definir).
+- Diseño BSP, movimiento de ventanas entre pantallas, archivos de configuración
+  y mejoras de animación (ver SPEC-009 §15, *Out of Scope*).
+
+## Licencia
+
+Este proyecto aún no incluye una licencia explícita. Hasta que se defina una,
+todos los derechos quedan reservados por el autor.
+
+<div align="center">
+
+Hecho con Rust para macOS
+
+</div>
