@@ -57,7 +57,7 @@ fn print_usage() {
     println!("  layout          Preview a tiling layout without changing windows.");
     println!("  apply           Apply a tiling layout to windows on a display.");
     println!("  watch           Monitor window events until interrupted (Ctrl+C).");
-    println!("  overlay         Show a translucent shortcut overlay (toggle: Cmd+Opt+/).");
+    println!("  overlay         Show a translucent shortcut overlay (toggle: Cmd+Opt+-).");
     println!("  run [--no-auto] Foreground window manager: overlay, shortcuts, automatic tiling.");
     println!("  -h, --help      Show this help message.");
     println!();
@@ -1067,7 +1067,7 @@ fn show_overlay() -> Result<(), AppError> {
             for failure in set.failures() {
                 eprintln!("warning: hotkey unavailable ({failure})");
             }
-            println!("Overlay shown. Press Cmd+Opt+/ to toggle, Ctrl+C to quit.");
+            println!("Overlay shown. Press Cmd+Opt+- to toggle, Ctrl+C to quit.");
             Some(set)
         }
         Err(error) => {
