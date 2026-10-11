@@ -130,10 +130,14 @@ static PENDING_HOTKEYS: Mutex<VecDeque<u32>> = Mutex::new(VecDeque::new());
 
 /// The virtual key code (`kVK_*`) for a logical [`Key`], or `None` when the
 /// key has no ANSI key code.
+///
+/// Key codes are physical ANSI positions, not characters. On ISO layouts
+/// (Latin American, Spanish) the `-` character sits on the key that US ANSI
+/// labels as `/`, so it maps to `kVK_ANSI_Slash` (0x2C).
 pub fn virtual_key_code(key: Key) -> Option<u32> {
     match key {
+        Key::Char('-') => Some(0x2C), // kVK_ANSI_Slash position (ISO `-` key)
         Key::Char('/') => Some(0x2C), // kVK_ANSI_Slash
-        Key::Char('-') => Some(0x1B), // kVK_ANSI_Minus
         Key::Char(character) => ansi_letter_code(character),
         Key::Up => Some(0x7E),
         Key::Down => Some(0x7D),
@@ -410,7 +414,7 @@ mod tests {
     fn default_hotkey_uses_command_option_minus() {
         let binding = &default_test_bindings()[0];
         assert_eq!(modifier_bits(binding.modifiers), 0x0900);
-        assert_eq!(virtual_key_code(binding.key), Some(0x1B));
+        assert_eq!(virtual_key_code(binding.key), Some(0x2C));
     }
 
     #[test]
@@ -418,7 +422,7 @@ mod tests {
         assert_eq!(virtual_key_code(Key::Char('m')), Some(0x2E));
         assert_eq!(virtual_key_code(Key::Char('S')), Some(0x01));
         assert_eq!(virtual_key_code(Key::Char('/')), Some(0x2C));
-        assert_eq!(virtual_key_code(Key::Char('-')), Some(0x1B));
+        assert_eq!(virtual_key_code(Key::Char('-')), Some(0x2C));
     }
 
     #[test]
