@@ -41,6 +41,9 @@ pub struct WindowClassification {
     pub minimized: Option<bool>,
     /// Whether the window is in native fullscreen, when the attribute is exposed.
     pub fullscreen: Option<bool>,
+    /// Whether the window's position and size can be changed programmatically,
+    /// when the platform can determine it (SPEC-009 FR-016).
+    pub controllable: Option<bool>,
 }
 
 #[cfg(test)]

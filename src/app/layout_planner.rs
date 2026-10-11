@@ -5,7 +5,10 @@
 //! display, orders them deterministically, and invokes the pure layout engine.
 //! Building a plan never mutates any window.
 
+use std::cmp::Ordering;
+
 use crate::core::display::{self, Display, DisplayId};
+use crate::core::event::WindowKey;
 use crate::core::geometry::Rect;
 use crate::core::layout::{self, LayoutConfig};
 use crate::core::layout_plan::{Exclusion, LayoutPlan, PlanEntry, PlanError, WindowRef};
@@ -27,6 +30,21 @@ pub fn build_plan<W: WindowRef>(
     target: DisplayId,
     config: LayoutConfig,
 ) -> Result<LayoutPlan<W>, PlanError> {
+    build_plan_ordered(displays, windows, target, config, &[])
+}
+
+/// Builds a plan whose eligible windows follow an explicit `order` (SPEC-009).
+///
+/// Windows present in `order` are placed in that sequence; any remaining
+/// window is appended in `compare_windows` order. An empty `order` reproduces
+/// [`build_plan`] exactly.
+pub fn build_plan_ordered<W: WindowRef>(
+    displays: &[Display],
+    windows: Vec<W>,
+    target: DisplayId,
+    config: LayoutConfig,
+    order: &[WindowKey],
+) -> Result<LayoutPlan<W>, PlanError> {
     let target_display =
         display::find(displays, target).ok_or(PlanError::DisplayNotFound(target))?;
 
@@ -45,7 +63,13 @@ pub fn build_plan<W: WindowRef>(
         }
     }
 
-    eligible.sort_by(|a, b| compare_windows(a.0.info(), b.0.info()));
+    let position = |key: WindowKey| order.iter().position(|candidate| *candidate == key);
+    eligible.sort_by(|a, b| match (position(a.0.key()), position(b.0.key())) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => compare_windows(a.0.info(), b.0.info()),
+    });
 
     let ids: Vec<WindowId> = (0..eligible.len())
         .map(|index| WindowId(index as u64))
@@ -84,6 +108,7 @@ mod tests {
     struct FakeWindow {
         info: WindowInfo,
         classification: WindowClassification,
+        key: crate::core::event::WindowKey,
     }
 
     impl FakeWindow {
@@ -99,7 +124,12 @@ mod tests {
                     role: Some("AXWindow".to_string()),
                     minimized: Some(false),
                     fullscreen: Some(false),
+                    controllable: Some(true),
                 },
+                key: crate::core::event::WindowKey::new(
+                    ProcessId(1),
+                    crate::core::event::RuntimeWindowId::new(0),
+                ),
             }
         }
     }
@@ -110,6 +140,9 @@ mod tests {
         }
         fn classification(&self) -> &WindowClassification {
             &self.classification
+        }
+        fn key(&self) -> crate::core::event::WindowKey {
+            self.key
         }
     }
 

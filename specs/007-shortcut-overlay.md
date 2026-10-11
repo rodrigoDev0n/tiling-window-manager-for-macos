@@ -112,7 +112,7 @@ On startup the overlay MUST be shown once, without requiring the hotkey.
 
 A single global hotkey MUST toggle the overlay between visible and hidden.
 
-- The default combination is `⌘⌥/` (Command+Option+Slash).
+- The default combination is `⌘⌥-` (Command+Option+Minus).
 - The hotkey MUST work while another application is frontmost.
 - The toggle MUST NOT activate this application or move focus.
 
@@ -155,7 +155,7 @@ overlay toggle is functional.
 
 | Combination | Action |
 | --- | --- |
-| `⌘⌥/` | Toggle this overlay |
+| `⌘⌥-` | Toggle this overlay |
 | `⌘⌥M` | Monocle layout |
 | `⌘⌥S` | Master/Stack layout |
 | `⌘⌥C` | Columns layout |
@@ -226,7 +226,7 @@ Test platform-independent logic only:
 
 1. Run `cargo run -- overlay`.
 2. Verify the translucent overlay appears at startup.
-3. Press `⌘⌥/` with another app frontmost; verify the overlay toggles.
+3. Press `⌘⌥-` with another app frontmost; verify the overlay toggles.
 4. Verify the overlay does not steal focus or activate the app.
 5. Verify content matches the default shortcut set.
 6. Verify placement on each connected display.

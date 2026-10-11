@@ -355,6 +355,15 @@ impl ObserverManager {
         std::mem::take(&mut self.events)
     }
 
+    /// Interns `element` under `pid` and returns its stable runtime identity.
+    ///
+    /// Used by automatic tiling (SPEC-009 FR-016) so control-discovered windows
+    /// share the identity space of the event registry. Must run on the main
+    /// thread.
+    pub fn resolve_identity(&mut self, pid: ProcessId, element: AXUIElementRef) -> RuntimeWindowId {
+        self.intern_identity(pid, element)
+    }
+
     /// Enqueues a normalized event without blocking a native callback.
     ///
     /// The queue is capped at [`EVENT_QUEUE_CAPACITY`]. On overflow the oldest

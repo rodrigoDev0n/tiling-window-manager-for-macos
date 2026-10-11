@@ -7,6 +7,7 @@
 use std::fmt;
 
 use crate::core::display::DisplayId;
+use crate::core::event::WindowKey;
 use crate::core::geometry::Rect;
 use crate::core::layout::{LayoutError, LayoutType};
 use crate::core::window::{WindowClassification, WindowId, WindowInfo};
@@ -26,6 +27,8 @@ pub trait WindowRef {
     fn info(&self) -> &WindowInfo;
     /// Window classification used for eligibility decisions.
     fn classification(&self) -> &WindowClassification;
+    /// Stable runtime key used to order windows (SPEC-009).
+    fn key(&self) -> WindowKey;
 }
 
 /// Reason a window was excluded from the layout plan.
@@ -37,6 +40,8 @@ pub enum ExclusionReason {
     Minimized,
     /// The window is in native fullscreen mode.
     Fullscreen,
+    /// The window does not support programmatic position or size changes.
+    NotControllable,
     /// The window could not be classified reliably (missing role or minimized
     /// attribute), so it is skipped rather than modified.
     Unclassifiable,
@@ -54,6 +59,7 @@ impl fmt::Display for ExclusionReason {
             ExclusionReason::NonStandardRole => "not a standard application window",
             ExclusionReason::Minimized => "window is minimized",
             ExclusionReason::Fullscreen => "window is fullscreen",
+            ExclusionReason::NotControllable => "window does not support position or size changes",
             ExclusionReason::Unclassifiable => "window could not be classified reliably",
             ExclusionReason::InvalidGeometry => "window has no valid geometry",
             ExclusionReason::NoIntersectingDisplay => "window does not intersect any display",

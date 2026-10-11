@@ -16,6 +16,7 @@ use core_foundation_sys::array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArra
 use core_foundation_sys::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 
+use crate::core::event::{RuntimeWindowId, WindowKey};
 use crate::core::geometry::Rect;
 use crate::core::layout_plan::WindowRef;
 use crate::core::window::{ProcessId, WindowClassification, WindowInfo};
@@ -63,6 +64,7 @@ pub struct ManagedWindow {
 /// Used by the layout pipeline (SPEC-005): classification drives eligibility,
 /// the handle lets the executor apply targeted geometry.
 pub struct LayoutWindow {
+    pub key: WindowKey,
     pub info: WindowInfo,
     pub classification: WindowClassification,
     pub handle: WindowHandle,
@@ -75,6 +77,10 @@ impl WindowRef for LayoutWindow {
 
     fn classification(&self) -> &WindowClassification {
         &self.classification
+    }
+
+    fn key(&self) -> WindowKey {
+        self.key
     }
 }
 
@@ -166,10 +172,37 @@ pub fn discover_managed_windows() -> Vec<ManagedWindow> {
 }
 
 /// Discovers windows together with their eligibility classification and handle.
+///
+/// Keys are synthetic and per-application; manual commands order windows by
+/// `compare_windows`, so only automatic tiling needs registry-anchored keys.
 pub fn discover_layout_windows() -> Vec<LayoutWindow> {
     applications::running_applications()
         .into_iter()
         .flat_map(|app| discover_application_layout_windows(app.pid, &app.name))
+        .collect()
+}
+
+/// Discovers controllable windows with registry-anchored keys (SPEC-009).
+///
+/// `resolve` interns each native element under its owning process and returns
+/// the stable runtime identity, so the discovered windows share the identity
+/// space of the event registry (`CFEqual`-anchored). Used by automatic tiling.
+pub fn discover_tiling_windows(
+    mut resolve: impl FnMut(ProcessId, AXUIElementRef) -> RuntimeWindowId,
+) -> Vec<LayoutWindow> {
+    applications::running_applications()
+        .into_iter()
+        .flat_map(|app| {
+            enumerate_window_elements(app.pid, |element| {
+                let id = resolve(app.pid, element);
+                LayoutWindow {
+                    key: WindowKey::new(app.pid, id),
+                    info: read_window_info(element, app.pid, &app.name),
+                    classification: read_classification(element),
+                    handle: WindowHandle::retain(element),
+                }
+            })
+        })
         .collect()
 }
 
@@ -310,14 +343,22 @@ fn discover_application_windows(pid: ProcessId, application: &str) -> Vec<Manage
 }
 
 fn discover_application_layout_windows(pid: ProcessId, application: &str) -> Vec<LayoutWindow> {
-    enumerate_window_elements(pid, |element| LayoutWindow {
+    let mut windows = enumerate_window_elements(pid, |element| LayoutWindow {
+        key: WindowKey::new(pid, RuntimeWindowId::new(0)),
         info: read_window_info(element, pid, application),
         classification: read_classification(element),
         handle: WindowHandle::retain(element),
-    })
+    });
+    for (index, window) in windows.iter_mut().enumerate() {
+        window.key = WindowKey::new(pid, RuntimeWindowId::new(index as u64));
+    }
+    windows
 }
 
-fn enumerate_window_elements<T>(pid: ProcessId, build: impl Fn(AXUIElementRef) -> T) -> Vec<T> {
+fn enumerate_window_elements<T>(
+    pid: ProcessId,
+    mut build: impl FnMut(AXUIElementRef) -> T,
+) -> Vec<T> {
     let mut collected = Vec::new();
 
     // SAFETY: `pid` comes from NSWorkspace; the returned element is owned.
@@ -366,7 +407,36 @@ fn read_classification(element: AXUIElementRef) -> WindowClassification {
         role: windows::copy_string(element, accessibility::AX_ROLE_ATTRIBUTE),
         minimized: windows::copy_bool(element, accessibility::AX_MINIMIZED_ATTRIBUTE),
         fullscreen: windows::copy_bool(element, accessibility::AX_FULL_SCREEN_ATTRIBUTE),
+        controllable: read_controllable(element),
     }
+}
+
+/// Reports whether `element` supports programmatic position and size changes.
+///
+/// Returns `None` when settability cannot be determined, so the pure
+/// eligibility rules can treat the window as unreliable (SPEC-009 FR-016).
+fn read_controllable(element: AXUIElementRef) -> Option<bool> {
+    let position = is_settable(element, accessibility::AX_POSITION_ATTRIBUTE)?;
+    let size = is_settable(element, accessibility::AX_SIZE_ATTRIBUTE)?;
+    Some(position && size)
+}
+
+/// Queries whether `attribute` is settable on `element`.
+fn is_settable(element: AXUIElementRef, attribute: &str) -> Option<bool> {
+    let attribute = CFString::new(attribute);
+    let mut settable: Boolean = 0;
+
+    // SAFETY: `element` is valid, `attribute` is a valid CFString, and
+    // `settable` points to writable storage.
+    let error = unsafe {
+        accessibility::AXUIElementIsAttributeSettable(
+            element,
+            attribute.as_concrete_TypeRef(),
+            &mut settable,
+        )
+    };
+
+    (error == AX_ERROR_SUCCESS).then_some(settable != 0)
 }
 
 fn check_settable(handle: &WindowHandle, attribute: &str) -> Result<(), ControlError> {

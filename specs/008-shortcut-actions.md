@@ -1,6 +1,6 @@
 # SPEC-008: Shortcut Actions (Foreground Window Manager)
 
-**Status:** Draft (awaiting approval)  
+**Status:** Implemented  
 **Priority:** High  
 **Dependencies:** SPEC-002 (window control), SPEC-004 (layout engine), SPEC-005 (layout application), SPEC-007 (overlay/hotkey foundations)  
 **Supersedes:** the SPEC-007 restriction that shortcuts are informational only.  
@@ -21,7 +21,7 @@ The first version MUST support exactly three families of actions:
 3. **Move window** — swap the focused window's frame with its neighbour in the
    pressed direction.
 
-Toggling the overlay (`⌘⌥/`) remains functional within `run`.
+Toggling the overlay (`⌘⌥-`) remains functional within `run`.
 
 ## 2. Architectural Principles
 
@@ -160,7 +160,7 @@ Binding { key: Key, modifiers: Modifiers, action: Action }
 
 | Keys | Action |
 | --- | --- |
-| `⌘⌥/` | `ToggleOverlay` |
+| `⌘⌥-` | `ToggleOverlay` |
 | `⌘⌥M` | `SetLayout(Monocle)` |
 | `⌘⌥S` | `SetLayout(MasterStack)` |
 | `⌘⌥C` | `SetLayout(Columns)` |
@@ -257,7 +257,7 @@ Handle and report distinctly, without crashing the loop:
    focused display re-tiles.
 3. Press `⌘⌥←/→/↑/↓`; verify focus moves to the expected neighbour.
 4. Press `⌘⌥⇧←/→`; verify the focused window swaps frames with its neighbour.
-5. Verify `⌘⌥/` toggles the overlay.
+5. Verify `⌘⌥-` toggles the overlay.
 6. Ctrl+C exits with no leftover window or hotkey.
 
 ## 12. Out of Scope
@@ -285,7 +285,7 @@ binding set registered.
 `⌘⌥⇧←/→` swap the focused window's frame with its directional neighbour.
 
 ### AC-005
-`⌘⌥/` toggles the overlay without activating the application.
+`⌘⌥-` toggles the overlay without activating the application.
 
 ### AC-006
 The overlay reference is derived from the binding table and lists only

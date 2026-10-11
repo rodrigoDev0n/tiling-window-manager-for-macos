@@ -27,7 +27,7 @@ pub struct ShortcutGroup {
 /// A logical key, independent of a specific keyboard layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
-    /// A character key (for example `'m'` or `'/'`).
+    /// A character key (for example `'m'` or `'-'`).
     Char(char),
     /// Arrow keys.
     Up,
@@ -84,7 +84,7 @@ pub fn default_bindings() -> Vec<Binding> {
     let cmd_opt_shift = Modifiers::command_option_shift();
     vec![
         Binding {
-            key: Key::Char('/'),
+            key: Key::Char('-'),
             modifiers: cmd_opt,
             action: Action::ToggleOverlay,
             description: "Show or hide this overlay".to_string(),
@@ -346,7 +346,7 @@ mod tests {
         let has_toggle = groups
             .iter()
             .flat_map(|g| &g.shortcuts)
-            .any(|s| s.keys == "⌘⌥/");
+            .any(|s| s.keys == "⌘⌥-");
         assert!(has_toggle);
     }
 

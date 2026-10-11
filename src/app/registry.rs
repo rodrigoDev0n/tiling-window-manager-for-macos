@@ -10,18 +10,7 @@ use crate::core::event::RuntimeWindowId;
 use crate::core::geometry::Rect;
 use crate::core::window::ProcessId;
 
-/// Logical key for one managed window.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct WindowKey {
-    pub pid: ProcessId,
-    pub id: RuntimeWindowId,
-}
-
-impl WindowKey {
-    pub const fn new(pid: ProcessId, id: RuntimeWindowId) -> Self {
-        Self { pid, id }
-    }
-}
+pub use crate::core::event::WindowKey;
 
 /// Last-known platform-independent state of one window.
 #[derive(Clone, Debug, PartialEq)]

@@ -120,6 +120,7 @@ mod tests {
 
     struct FakeWindow {
         info: WindowInfo,
+        key: crate::core::event::WindowKey,
     }
 
     impl FakeWindow {
@@ -131,6 +132,10 @@ mod tests {
                     title: None,
                     bounds: Some(bounds),
                 },
+                key: crate::core::event::WindowKey::new(
+                    ProcessId(1),
+                    crate::core::event::RuntimeWindowId::new(0),
+                ),
             }
         }
     }
@@ -138,6 +143,9 @@ mod tests {
     impl WindowRef for FakeWindow {
         fn info(&self) -> &WindowInfo {
             &self.info
+        }
+        fn key(&self) -> crate::core::event::WindowKey {
+            self.key
         }
         fn classification(&self) -> &WindowClassification {
             // Not used by the executor; provide a valid stand-in.
@@ -147,6 +155,7 @@ mod tests {
                 role: Some("AXWindow".to_string()),
                 minimized: Some(false),
                 fullscreen: Some(false),
+                controllable: Some(true),
             })
         }
     }

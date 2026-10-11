@@ -40,6 +40,12 @@ pub fn assess<W: WindowRef>(
         return Err(ExclusionReason::Fullscreen);
     }
 
+    match classification.controllable {
+        Some(true) => {}
+        Some(false) => return Err(ExclusionReason::NotControllable),
+        None => return Err(ExclusionReason::Unclassifiable),
+    }
+
     let bounds = window
         .info()
         .bounds
@@ -63,6 +69,7 @@ mod tests {
     struct FakeWindow {
         info: WindowInfo,
         classification: WindowClassification,
+        key: crate::core::event::WindowKey,
     }
 
     impl FakeWindow {
@@ -70,6 +77,7 @@ mod tests {
             role: Option<&str>,
             minimized: Option<bool>,
             fullscreen: Option<bool>,
+            controllable: Option<bool>,
             bounds: Option<Rect>,
         ) -> Self {
             Self {
@@ -83,7 +91,12 @@ mod tests {
                     role: role.map(str::to_string),
                     minimized,
                     fullscreen,
+                    controllable,
                 },
+                key: crate::core::event::WindowKey::new(
+                    ProcessId(1),
+                    crate::core::event::RuntimeWindowId::new(0),
+                ),
             }
         }
     }
@@ -94,6 +107,9 @@ mod tests {
         }
         fn classification(&self) -> &WindowClassification {
             &self.classification
+        }
+        fn key(&self) -> crate::core::event::WindowKey {
+            self.key
         }
     }
 
@@ -114,6 +130,7 @@ mod tests {
             Some("AXWindow"),
             Some(false),
             Some(false),
+            Some(true),
             Some(Rect::new(0.0, 0.0, 500.0, 500.0)),
         );
         assert_eq!(
@@ -128,6 +145,7 @@ mod tests {
             Some("AXSheet"),
             Some(false),
             Some(false),
+            Some(true),
             Some(Rect::new(0.0, 0.0, 500.0, 500.0)),
         );
         assert_eq!(
@@ -142,6 +160,7 @@ mod tests {
             None,
             Some(false),
             Some(false),
+            Some(true),
             Some(Rect::new(0.0, 0.0, 500.0, 500.0)),
         );
         assert_eq!(
@@ -156,6 +175,7 @@ mod tests {
             Some("AXWindow"),
             Some(true),
             Some(false),
+            Some(true),
             Some(Rect::new(0.0, 0.0, 500.0, 500.0)),
         );
         assert_eq!(
@@ -170,6 +190,7 @@ mod tests {
             Some("AXWindow"),
             None,
             Some(false),
+            Some(true),
             Some(Rect::new(0.0, 0.0, 500.0, 500.0)),
         );
         assert_eq!(
@@ -183,6 +204,7 @@ mod tests {
         let window = FakeWindow::new(
             Some("AXWindow"),
             Some(false),
+            Some(true),
             Some(true),
             Some(Rect::new(0.0, 0.0, 500.0, 500.0)),
         );
@@ -198,6 +220,7 @@ mod tests {
             Some("AXWindow"),
             Some(false),
             None,
+            Some(true),
             Some(Rect::new(0.0, 0.0, 500.0, 500.0)),
         );
         assert_eq!(
@@ -208,7 +231,7 @@ mod tests {
 
     #[test]
     fn missing_geometry_is_excluded() {
-        let window = FakeWindow::new(Some("AXWindow"), Some(false), Some(false), None);
+        let window = FakeWindow::new(Some("AXWindow"), Some(false), Some(false), Some(true), None);
         assert_eq!(
             assess(&window, &displays(), DisplayId(1)),
             Err(ExclusionReason::InvalidGeometry)
@@ -221,6 +244,7 @@ mod tests {
             Some("AXWindow"),
             Some(false),
             Some(false),
+            Some(true),
             Some(Rect::new(0.0, 0.0, 0.0, 0.0)),
         );
         assert_eq!(
@@ -235,6 +259,7 @@ mod tests {
             Some("AXWindow"),
             Some(false),
             Some(false),
+            Some(true),
             Some(Rect::new(5000.0, 5000.0, 100.0, 100.0)),
         );
         assert_eq!(
@@ -249,11 +274,42 @@ mod tests {
             Some("AXWindow"),
             Some(false),
             Some(false),
+            Some(true),
             Some(Rect::new(-1900.0, 100.0, 100.0, 100.0)),
         );
         assert_eq!(
             assess(&window, &displays(), DisplayId(99)),
             Err(ExclusionReason::NotOnTargetDisplay)
+        );
+    }
+
+    #[test]
+    fn non_controllable_window_is_excluded() {
+        let window = FakeWindow::new(
+            Some("AXWindow"),
+            Some(false),
+            Some(false),
+            Some(false),
+            Some(Rect::new(0.0, 0.0, 500.0, 500.0)),
+        );
+        assert_eq!(
+            assess(&window, &displays(), DisplayId(1)),
+            Err(ExclusionReason::NotControllable)
+        );
+    }
+
+    #[test]
+    fn unknown_controllability_is_excluded_as_unclassifiable() {
+        let window = FakeWindow::new(
+            Some("AXWindow"),
+            Some(false),
+            Some(false),
+            None,
+            Some(Rect::new(0.0, 0.0, 500.0, 500.0)),
+        );
+        assert_eq!(
+            assess(&window, &displays(), DisplayId(1)),
+            Err(ExclusionReason::Unclassifiable)
         );
     }
 }

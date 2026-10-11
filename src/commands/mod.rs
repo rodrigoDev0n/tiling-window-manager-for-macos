@@ -4,13 +4,13 @@
 //! the `platform` layer.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::app;
 use crate::core::action::{Action, Direction};
 use crate::core::display::{self, Display, DisplayId};
 use crate::core::display_assignment;
-use crate::core::event::{AppEvent, DomainEvent, WindowEvent};
+use crate::core::event::{AppEvent, DomainEvent, WindowEvent, WindowKey};
 use crate::core::geometry::Rect;
 use crate::core::layout::{self, LayoutConfig, LayoutType, Shortcut};
 use crate::core::layout_plan::{ExecutionReport, PlanError, WindowRef};
@@ -35,7 +35,7 @@ pub fn run(args: &[String]) -> Result<(), AppError> {
         Some("apply") => apply_layout(&args[1..]),
         Some("watch") => watch(),
         Some("overlay") => show_overlay(),
-        Some("run") => run_manager(),
+        Some("run") => run_manager(&args[1..]),
         Some("-h" | "--help") | None => {
             print_usage();
             Ok(())
@@ -58,7 +58,7 @@ fn print_usage() {
     println!("  apply           Apply a tiling layout to windows on a display.");
     println!("  watch           Monitor window events until interrupted (Ctrl+C).");
     println!("  overlay         Show a translucent shortcut overlay (toggle: Cmd+Opt+/).");
-    println!("  run             Foreground window manager: overlay + functional shortcuts.");
+    println!("  run [--no-auto] Foreground window manager: overlay, shortcuts, automatic tiling.");
     println!("  -h, --help      Show this help message.");
     println!();
     println!("Selectors (default: --focused):");
@@ -1097,12 +1097,17 @@ fn show_overlay() -> Result<(), AppError> {
     Ok(())
 }
 
-/// Runs the foreground window manager (SPEC-008): the overlay plus the full
-/// functional shortcut set, until interrupted with Ctrl+C.
-fn run_manager() -> Result<(), AppError> {
+/// Runs the foreground window manager (SPEC-008/SPEC-009).
+///
+/// Without flags the manager keeps every active display tiled automatically
+/// (SPEC-009). Passing `--no-auto` preserves the exact SPEC-008 behavior: the
+/// overlay plus functional shortcuts, with no automatic layout.
+fn run_manager(args: &[String]) -> Result<(), AppError> {
     if !accessibility::is_trusted() {
         return Err(AppError::PermissionDenied);
     }
+
+    let auto = !args.iter().any(|arg| arg == "--no-auto");
 
     FOREGROUND_RUNNING.store(true, Ordering::SeqCst);
     install_interrupt_handler();
@@ -1126,21 +1131,384 @@ fn run_manager() -> Result<(), AppError> {
         }
     };
 
-    println!("Window manager active. Overlay shown. Ctrl+C to quit.");
-
-    while FOREGROUND_RUNNING.load(Ordering::SeqCst) {
-        overlay::pump_events(0.1);
-        if let Some(set) = &hotkeys {
-            for action in set.take_pending() {
-                execute_action(action, &window, &mut visibility);
-            }
-        }
+    if auto {
+        println!("Window manager active (automatic tiling). Overlay shown. Ctrl+C to quit.");
+        run_auto_manager(&window, &mut visibility, hotkeys.as_ref());
+    } else {
+        println!("Window manager active. Overlay shown. Ctrl+C to quit.");
+        run_manual_manager(&window, &mut visibility, hotkeys.as_ref());
     }
 
     drop(hotkeys);
     drop(window);
     println!("Stopped.");
     Ok(())
+}
+
+/// Runs the SPEC-008 foreground loop: overlay plus shortcuts, no automatic
+/// layout.
+fn run_manual_manager(
+    window: &overlay::OverlayWindow,
+    visibility: &mut app::overlay::OverlayState,
+    hotkeys: Option<&hotkey::HotkeySet>,
+) {
+    while FOREGROUND_RUNNING.load(Ordering::SeqCst) {
+        overlay::pump_events(0.1);
+        if let Some(set) = hotkeys {
+            for action in set.take_pending() {
+                execute_action(action, window, visibility);
+            }
+        }
+    }
+}
+
+/// Runs the SPEC-009 foreground loop: observers, event normalization, and
+/// automatic per-display re-tiling, alongside the SPEC-008 overlay/shortcuts.
+fn run_auto_manager(
+    window: &overlay::OverlayWindow,
+    visibility: &mut app::overlay::OverlayState,
+    hotkeys: Option<&hotkey::HotkeySet>,
+) {
+    let mut auto = AutoManager::new();
+    let interval = auto.coalesce_interval().as_secs_f64();
+
+    // SPEC-006 startup order: register initial observers and seed the registry,
+    // then seed the tiling order and tile every active display once (FR-011).
+    auto.pump();
+    auto.seed_order();
+    auto.retile_all();
+
+    while FOREGROUND_RUNNING.load(Ordering::SeqCst) {
+        observers::run_loop_step(interval);
+        overlay::pump_events(0.05);
+        if let Some(set) = hotkeys {
+            for action in set.take_pending() {
+                execute_action_auto(action, window, visibility, &mut auto);
+            }
+        }
+        auto.pump();
+        auto.retile_due();
+    }
+
+    auto.shutdown();
+    report_diagnostics_auto(&auto);
+}
+
+/// Owns the SPEC-006 observer manager and the SPEC-009 tiling controller so the
+/// automatic-tiling loop can drive them without exposing native types.
+struct AutoManager {
+    observers: Box<observers::ObserverManager>,
+    processor: app::event_processor::EventProcessor,
+    tiling: app::tiling::TilingState,
+}
+
+impl AutoManager {
+    fn new() -> Self {
+        let mut observers = Box::new(observers::ObserverManager::new());
+        observers.subscribe_workspace();
+        observers.sync_applications();
+        Self {
+            observers,
+            processor: app::event_processor::EventProcessor::default(),
+            tiling: app::tiling::TilingState::new(),
+        }
+    }
+
+    fn coalesce_interval(&self) -> Duration {
+        self.processor.coalesce_interval()
+    }
+
+    fn shutdown(&mut self) {
+        self.observers.shutdown();
+        report_observer_diagnostics(self.observers.diagnostics());
+        report_processor_diagnostics(
+            self.processor.diagnostics(),
+            self.processor.registry().len(),
+        );
+    }
+
+    /// Drains native events, keeps observers/registry consistent, and feeds the
+    /// effective transitions to the tiling controller.
+    fn pump(&mut self) {
+        let now = Instant::now();
+        let active = displays::snapshot();
+        let mut reconcile = false;
+
+        for event in self.observers.drain_events() {
+            match &event {
+                DomainEvent::App {
+                    event: AppEvent::Launched { pid, name },
+                    ..
+                } => {
+                    if let Err(error) = self.observers.register_application(*pid, name) {
+                        eprintln!(
+                            "observer registration failed for {name} (pid {}): {error}",
+                            pid.0
+                        );
+                    }
+                    reconcile = true;
+                }
+                DomainEvent::App {
+                    event: AppEvent::Terminated { pid },
+                    ..
+                } => {
+                    self.observers.remove_application(*pid);
+                    reconcile = true;
+                }
+                _ => {}
+            }
+
+            for transition in self.processor.process(event, now) {
+                self.tiling.observe(&transition, &active);
+            }
+        }
+
+        for transition in self.processor.flush(now) {
+            self.tiling.observe(&transition, &active);
+        }
+
+        if reconcile {
+            let snapshot = self.observers.snapshot();
+            for transition in self.processor.reconcile(snapshot, now) {
+                self.tiling.observe(&transition, &active);
+            }
+        }
+    }
+
+    /// Seeds the per-display tiling order from the current registry snapshot.
+    fn seed_order(&mut self) {
+        let active = displays::snapshot();
+        let entries: Vec<(WindowKey, WindowInfo)> = self
+            .processor
+            .registry()
+            .iter()
+            .filter(|record| !record.minimized)
+            .map(|record| {
+                (
+                    record.key,
+                    WindowInfo {
+                        pid: record.key.pid,
+                        application: record.application.clone(),
+                        title: record.title.clone(),
+                        bounds: record.bounds,
+                    },
+                )
+            })
+            .collect();
+        self.tiling.seed(&active, entries);
+    }
+
+    /// Re-tiles every display the controller reports as ready.
+    fn retile_due(&mut self) {
+        for display in self.tiling.due(Instant::now()) {
+            self.retile_display(display);
+        }
+    }
+
+    /// Re-tiles every active display once (initial tiling, FR-011).
+    fn retile_all(&mut self) {
+        for display in displays::snapshot() {
+            self.retile_display(display.id);
+        }
+    }
+
+    /// Re-tiles a single display using the persistent order and layout (FR-009).
+    fn retile_display(&mut self, display: DisplayId) {
+        let active = displays::snapshot();
+        let config = self.tiling.layout_for(display);
+        let order = self.tiling.order_for(display).to_vec();
+        let now = Instant::now();
+
+        if order.is_empty() {
+            eprintln!("automatic tiling: display {display}: no eligible windows");
+            self.tiling.record_applied(display, &[], now);
+            return;
+        }
+
+        let windows = {
+            let observers = &mut self.observers;
+            control::discover_tiling_windows(|pid, element| {
+                observers.resolve_identity(pid, element)
+            })
+        };
+
+        let plan = match app::layout_planner::build_plan_ordered(
+            &active, windows, display, config, &order,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                eprintln!("automatic tiling: display {display}: {error}");
+                self.tiling.record_applied(display, &[], now);
+                return;
+            }
+        };
+
+        if plan.entries.is_empty() {
+            eprintln!("automatic tiling: display {display}: no eligible windows");
+        }
+
+        let keys: Vec<(WindowId, WindowKey)> = plan
+            .entries
+            .iter()
+            .map(|entry| (entry.window_id, entry.window.key()))
+            .collect();
+
+        let report = app::layout_executor::execute(
+            plan,
+            &NativeBackend,
+            app::layout_executor::ExecutionMode::Apply,
+        );
+
+        let applied = applied_geometry(&report, &keys);
+        self.tiling.record_applied(display, &applied, now);
+
+        if report.failed > 0 || report.constrained > 0 {
+            eprintln!(
+                "automatic tiling: display {display}: applied {}, constrained {}, failed {}, skipped {}",
+                report.applied, report.constrained, report.failed, report.skipped
+            );
+        }
+    }
+}
+
+/// Extracts the geometry macOS actually applied per window, keyed by its stable
+/// identity (SPEC-009 FR-006). Windows that failed are omitted so they are
+/// retried on the next change.
+fn applied_geometry(
+    report: &ExecutionReport,
+    keys: &[(WindowId, WindowKey)],
+) -> Vec<(WindowKey, Rect)> {
+    let mut applied = Vec::with_capacity(report.results.len());
+    for result in &report.results {
+        let Some(key) = keys
+            .iter()
+            .find(|(id, _)| *id == result.window_id)
+            .map(|(_, key)| *key)
+        else {
+            continue;
+        };
+        match &result.state {
+            crate::core::layout_plan::WindowResultState::Applied(actual)
+            | crate::core::layout_plan::WindowResultState::Constrained(actual) => {
+                applied.push((key, *actual));
+            }
+            crate::core::layout_plan::WindowResultState::AlreadyCorrect => {
+                applied.push((key, result.target));
+            }
+            crate::core::layout_plan::WindowResultState::Failed(_)
+            | crate::core::layout_plan::WindowResultState::Planned => {}
+        }
+    }
+    applied
+}
+
+/// Dispatches one hotkey action under automatic tiling (SPEC-009 FR-013/014/015).
+fn execute_action_auto(
+    action: Action,
+    overlay_window: &overlay::OverlayWindow,
+    visibility: &mut app::overlay::OverlayState,
+    auto: &mut AutoManager,
+) {
+    match action {
+        Action::ToggleOverlay => toggle_overlay(overlay_window, visibility),
+        Action::SetLayout(layout) => auto_set_layout(layout, auto),
+        Action::Focus(direction) => auto_navigate(direction, false, auto),
+        Action::MoveWindow(direction) => auto_navigate(direction, true, auto),
+    }
+}
+
+/// Sets the focused display's layout and re-tiles it immediately (FR-013).
+fn auto_set_layout(layout: LayoutType, auto: &mut AutoManager) {
+    let Some(display) = focused_display() else {
+        eprintln!("layout: no focused window");
+        return;
+    };
+    auto.tiling.set_layout(display, layout);
+    auto.retile_display(display);
+}
+
+/// Focuses or reorders the focused window's directional neighbour using the
+/// persistent tiling order (FR-014, FR-015).
+fn auto_navigate(direction: Direction, move_window: bool, auto: &mut AutoManager) {
+    let Some(focused) = control::focused_window() else {
+        eprintln!("navigation: no focused window");
+        return;
+    };
+    let Some(bounds) = focused.info.bounds else {
+        eprintln!("navigation: focused window has no geometry");
+        return;
+    };
+    let active = displays::snapshot();
+    let Some(target) = display_assignment::assign(&active, bounds) else {
+        eprintln!("navigation: focused window is not on an active display");
+        return;
+    };
+
+    let order = auto.tiling.order_for(target).to_vec();
+    let windows = {
+        let observers = &mut auto.observers;
+        control::discover_tiling_windows(|pid, element| observers.resolve_identity(pid, element))
+    };
+
+    let mut eligible: Vec<(control::LayoutWindow, Rect)> = Vec::new();
+    for window in windows {
+        if let Ok(rect) = app::window_eligibility::assess(&window, &active, target) {
+            eligible.push((window, rect));
+        }
+    }
+    if eligible.len() < 2 {
+        return;
+    }
+
+    let position = |key: WindowKey| order.iter().position(|candidate| *candidate == key);
+    eligible.sort_by(|a, b| match (position(a.0.key()), position(b.0.key())) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => compare_windows(a.0.info(), b.0.info()),
+    });
+
+    let rects: Vec<Rect> = eligible.iter().map(|(_, rect)| *rect).collect();
+    let ordered: Vec<control::LayoutWindow> =
+        eligible.into_iter().map(|(window, _)| window).collect();
+
+    let Some(current) = control::focused_index(&ordered) else {
+        eprintln!("navigation: focused window not found among eligible windows");
+        return;
+    };
+    let Some(neighbor) = navigation::directional_neighbor(&rects, current, direction) else {
+        return;
+    };
+
+    if move_window {
+        let current_key = ordered[current].key();
+        let neighbor_key = ordered[neighbor].key();
+        if auto.tiling.swap_in_order(target, current_key, neighbor_key) {
+            auto.retile_display(target);
+        }
+    } else {
+        focus_neighbor(&ordered, neighbor);
+    }
+}
+
+/// Returns the active display containing the focused window, if any.
+fn focused_display() -> Option<DisplayId> {
+    let focused = control::focused_window()?;
+    let bounds = focused.info.bounds?;
+    let active = displays::snapshot();
+    display_assignment::assign(&active, bounds)
+}
+
+/// Reports automatic-tiling and controller diagnostics (FR-018).
+fn report_diagnostics_auto(auto: &AutoManager) {
+    let diagnostics = auto.tiling.diagnostics();
+    eprintln!(
+        "tiling: retiles={} win_created={} win_destroyed={} suppressed_geometry={}",
+        diagnostics.retiles,
+        diagnostics.windows_created,
+        diagnostics.windows_destroyed,
+        diagnostics.suppressed_geometry_events,
+    );
 }
 
 fn create_overlay_window() -> Result<overlay::OverlayWindow, AppError> {
@@ -1510,5 +1878,70 @@ mod tests {
         assert!(rendered.contains("Terminal"));
         assert!(rendered.contains("applied"));
         assert!(rendered.contains("1440"));
+    }
+
+    #[test]
+    fn applied_geometry_records_actual_and_skips_failures() {
+        use crate::core::event::RuntimeWindowId;
+        use crate::core::layout_plan::{WindowResult, WindowResultState};
+
+        let key_a = WindowKey::new(ProcessId(1), RuntimeWindowId::new(10));
+        let key_b = WindowKey::new(ProcessId(1), RuntimeWindowId::new(11));
+        let key_c = WindowKey::new(ProcessId(1), RuntimeWindowId::new(12));
+        let target = Rect::new(0.0, 25.0, 1440.0, 875.0);
+
+        let report = ExecutionReport {
+            display_id: DisplayId(1),
+            layout: LayoutType::MasterStack,
+            discovered: 3,
+            eligible: 3,
+            applied: 1,
+            constrained: 1,
+            failed: 1,
+            skipped: 0,
+            planned: 0,
+            results: vec![
+                WindowResult {
+                    window_id: WindowId(0),
+                    application: "A".to_string(),
+                    title: None,
+                    original: Rect::new(5.0, 5.0, 100.0, 100.0),
+                    target,
+                    state: WindowResultState::Applied(target),
+                },
+                WindowResult {
+                    window_id: WindowId(1),
+                    application: "B".to_string(),
+                    title: None,
+                    original: Rect::new(5.0, 5.0, 100.0, 100.0),
+                    target,
+                    state: WindowResultState::Constrained(Rect::new(0.0, 25.0, 1400.0, 800.0)),
+                },
+                WindowResult {
+                    window_id: WindowId(2),
+                    application: "C".to_string(),
+                    title: None,
+                    original: Rect::new(5.0, 5.0, 100.0, 100.0),
+                    target,
+                    state: WindowResultState::Failed("boom".to_string()),
+                },
+            ],
+            exclusions: Vec::new(),
+        };
+
+        let keys = vec![
+            (WindowId(0), key_a),
+            (WindowId(1), key_b),
+            (WindowId(2), key_c),
+        ];
+        let applied = applied_geometry(&report, &keys);
+
+        assert_eq!(
+            applied,
+            vec![
+                (key_a, target),
+                (key_b, Rect::new(0.0, 25.0, 1400.0, 800.0)),
+            ]
+        );
     }
 }

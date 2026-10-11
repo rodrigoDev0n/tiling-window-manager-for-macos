@@ -133,6 +133,7 @@ static PENDING_HOTKEYS: Mutex<VecDeque<u32>> = Mutex::new(VecDeque::new());
 pub fn virtual_key_code(key: Key) -> Option<u32> {
     match key {
         Key::Char('/') => Some(0x2C), // kVK_ANSI_Slash
+        Key::Char('-') => Some(0x1B), // kVK_ANSI_Minus
         Key::Char(character) => ansi_letter_code(character),
         Key::Up => Some(0x7E),
         Key::Down => Some(0x7D),
@@ -385,7 +386,7 @@ mod tests {
     fn default_test_bindings() -> Vec<Binding> {
         vec![
             Binding {
-                key: Key::Char('/'),
+                key: Key::Char('-'),
                 modifiers: Modifiers::command_option(),
                 action: Action::ToggleOverlay,
                 description: String::new(),
@@ -406,10 +407,10 @@ mod tests {
     }
 
     #[test]
-    fn default_hotkey_uses_command_option_slash() {
+    fn default_hotkey_uses_command_option_minus() {
         let binding = &default_test_bindings()[0];
         assert_eq!(modifier_bits(binding.modifiers), 0x0900);
-        assert_eq!(virtual_key_code(binding.key), Some(0x2C));
+        assert_eq!(virtual_key_code(binding.key), Some(0x1B));
     }
 
     #[test]
@@ -417,6 +418,7 @@ mod tests {
         assert_eq!(virtual_key_code(Key::Char('m')), Some(0x2E));
         assert_eq!(virtual_key_code(Key::Char('S')), Some(0x01));
         assert_eq!(virtual_key_code(Key::Char('/')), Some(0x2C));
+        assert_eq!(virtual_key_code(Key::Char('-')), Some(0x1B));
     }
 
     #[test]

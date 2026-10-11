@@ -21,6 +21,23 @@ impl RuntimeWindowId {
     }
 }
 
+/// Stable runtime key for one managed window.
+///
+/// Combines the owning process with the non-persistent [`RuntimeWindowId`] so a
+/// window can be tracked across events, the registry, and automatic tiling
+/// without exposing native references (SPEC-006 FR-005, SPEC-009 FR-002).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct WindowKey {
+    pub pid: ProcessId,
+    pub id: RuntimeWindowId,
+}
+
+impl WindowKey {
+    pub const fn new(pid: ProcessId, id: RuntimeWindowId) -> Self {
+        Self { pid, id }
+    }
+}
+
 /// Event metadata attached to every domain event.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EventMetadata {
