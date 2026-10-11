@@ -1667,15 +1667,27 @@ fn map_overlay_error(error: overlay::OverlayError) -> AppError {
     AppError::OverlayFailed(error.to_string())
 }
 
-extern "C" fn handle_sigint(_signal: libc::c_int) {
+extern "C" fn handle_termination_signal(_signal: libc::c_int) {
     // Storing an atomic flag is safe inside a signal handler.
     FOREGROUND_RUNNING.store(false, Ordering::SeqCst);
 }
 
+/// Installs handlers for the signals that stop a foreground loop.
+///
+/// `SIGINT` covers Ctrl+C from a terminal; `SIGTERM` lets a LaunchAgent or
+/// `launchctl bootout` shut the manager down gracefully.
 fn install_interrupt_handler() {
-    // SAFETY: `handle_sigint` has the expected signal handler signature.
+    // SAFETY: `handle_termination_signal` has the expected signal handler
+    // signature.
     unsafe {
-        libc::signal(libc::SIGINT, handle_sigint as libc::sighandler_t);
+        libc::signal(
+            libc::SIGINT,
+            handle_termination_signal as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            handle_termination_signal as libc::sighandler_t,
+        );
     }
 }
 
