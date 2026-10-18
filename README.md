@@ -175,7 +175,7 @@ modo que la lista mostrada y las acciones ejecutadas nunca divergen.
 | `⌘⌥Espacio` | Entrar o salir del modo mover |
 | `⌘⌥F` | Pantalla completa de la ventana enfocada |
 | `⌘⌥←/→/↑/↓` | Mover el foco (o la ventana, en modo mover) |
-| `⌘⌥⇧←/→` | Reordenar la ventana enfocada y reorganizar |
+| `⌘⌥⇧←/→/↑/↓` | Mover la ventana enfocada |
 
 ## Diseños
 
