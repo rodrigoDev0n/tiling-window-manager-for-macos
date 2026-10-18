@@ -1,1 +1,7 @@
 /target
+
+# Material de firma de código: nunca debe versionarse.
+*.pem
+*.p12
+*.key
+tw-codesign*

@@ -13,6 +13,7 @@ use crate::core::window::WindowId;
 mod columns;
 mod master_stack;
 mod monocle;
+mod quad;
 mod rows;
 
 /// Calculates target rectangles for `windows` inside `area`.
@@ -50,6 +51,7 @@ pub fn calculate(
         LayoutType::Columns => columns::arrange(windows, area, config),
         LayoutType::Rows => rows::arrange(windows, area, config),
         LayoutType::Monocle => monocle::arrange(windows, area, config),
+        LayoutType::Quad => quad::arrange(windows, area, config),
     }?;
 
     for placement in &placed {
@@ -260,6 +262,7 @@ mod tests {
             LayoutType::Columns,
             LayoutType::Rows,
             LayoutType::Monocle,
+            LayoutType::Quad,
         ];
 
         let areas = [

@@ -114,6 +114,12 @@ pub fn default_bindings() -> Vec<Binding> {
             description: "Rows layout".to_string(),
         },
         Binding {
+            key: Key::Char('q'),
+            modifiers: cmd_opt,
+            action: Action::SetLayout(LayoutType::Quad),
+            description: "Quad layout (2x2)".to_string(),
+        },
+        Binding {
             key: Key::Left,
             modifiers: cmd_opt,
             action: Action::Focus(Direction::Left),
@@ -275,7 +281,7 @@ mod tests {
                 .iter()
                 .filter(|b| matches!(b.action, Action::SetLayout(_)))
                 .count(),
-            4
+            5
         );
         assert_eq!(
             bindings
