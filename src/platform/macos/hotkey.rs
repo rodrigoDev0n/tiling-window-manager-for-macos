@@ -138,6 +138,7 @@ pub fn virtual_key_code(key: Key) -> Option<u32> {
     match key {
         Key::Char('-') => Some(0x2C), // kVK_ANSI_Slash position (ISO `-` key)
         Key::Char('/') => Some(0x2C), // kVK_ANSI_Slash
+        Key::Char(' ') => Some(0x31), // kVK_Space
         Key::Char(character) => ansi_letter_code(character),
         Key::Up => Some(0x7E),
         Key::Down => Some(0x7D),
@@ -423,6 +424,7 @@ mod tests {
         assert_eq!(virtual_key_code(Key::Char('S')), Some(0x01));
         assert_eq!(virtual_key_code(Key::Char('/')), Some(0x2C));
         assert_eq!(virtual_key_code(Key::Char('-')), Some(0x2C));
+        assert_eq!(virtual_key_code(Key::Char(' ')), Some(0x31));
     }
 
     #[test]

@@ -14,6 +14,7 @@ use crate::core::event::{AppEvent, DomainEvent, WindowEvent, WindowKey};
 use crate::core::geometry::Rect;
 use crate::core::layout::{self, LayoutConfig, LayoutType, Shortcut};
 use crate::core::layout_plan::{ExecutionReport, PlanError, WindowRef};
+use crate::core::movement;
 use crate::core::navigation;
 use crate::core::selector::{self, SelectionError, WindowFilter, WindowSelector, compare_windows};
 use crate::core::shortcut;
@@ -1153,11 +1154,12 @@ fn run_manual_manager(
     visibility: &mut app::overlay::OverlayState,
     hotkeys: Option<&hotkey::HotkeySet>,
 ) {
+    let mut move_mode = MoveMode::default();
     while FOREGROUND_RUNNING.load(Ordering::SeqCst) {
         overlay::pump_events(0.1);
         if let Some(set) = hotkeys {
             for action in set.take_pending() {
-                execute_action(action, window, visibility);
+                execute_action(action, window, visibility, &mut move_mode);
             }
         }
     }
@@ -1171,6 +1173,7 @@ fn run_auto_manager(
     hotkeys: Option<&hotkey::HotkeySet>,
 ) {
     let mut auto = AutoManager::new();
+    let mut move_mode = MoveMode::default();
     let interval = auto.coalesce_interval().as_secs_f64();
 
     // SPEC-006 startup order: register initial observers and seed the registry,
@@ -1184,7 +1187,7 @@ fn run_auto_manager(
         overlay::pump_events(0.05);
         if let Some(set) = hotkeys {
             for action in set.take_pending() {
-                execute_action_auto(action, window, visibility, &mut auto);
+                execute_action_auto(action, window, visibility, &mut auto, &mut move_mode);
             }
         }
         auto.pump();
@@ -1409,10 +1412,14 @@ fn execute_action_auto(
     overlay_window: &overlay::OverlayWindow,
     visibility: &mut app::overlay::OverlayState,
     auto: &mut AutoManager,
+    move_mode: &mut MoveMode,
 ) {
     match action {
         Action::ToggleOverlay => toggle_overlay(overlay_window, visibility),
         Action::SetLayout(layout) => auto_set_layout(layout, auto),
+        Action::ToggleMoveMode => move_mode.toggle(overlay_window, visibility),
+        Action::ToggleFullscreen => toggle_fullscreen(),
+        Action::Focus(direction) if move_mode.active => move_zone_auto(direction, auto),
         Action::Focus(direction) => auto_navigate(direction, false, auto),
         Action::MoveWindow(direction) => auto_navigate(direction, true, auto),
     }
@@ -1500,6 +1507,14 @@ fn focused_display() -> Option<DisplayId> {
     display_assignment::assign(&active, bounds)
 }
 
+/// Returns the usable area of `display` within `active`, if it is present.
+fn work_area_of(active: &[Display], display: DisplayId) -> Option<Rect> {
+    active
+        .iter()
+        .find(|candidate| candidate.id == display)
+        .map(|candidate| candidate.usable)
+}
+
 /// Reports automatic-tiling and controller diagnostics (FR-018).
 fn report_diagnostics_auto(auto: &AutoManager) {
     let diagnostics = auto.tiling.diagnostics();
@@ -1540,13 +1555,222 @@ fn execute_action(
     action: Action,
     overlay_window: &overlay::OverlayWindow,
     visibility: &mut app::overlay::OverlayState,
+    move_mode: &mut MoveMode,
 ) {
     match action {
         Action::ToggleOverlay => toggle_overlay(overlay_window, visibility),
         Action::SetLayout(layout) => apply_layout_action(layout),
+        Action::ToggleMoveMode => move_mode.toggle(overlay_window, visibility),
+        Action::ToggleFullscreen => toggle_fullscreen(),
+        Action::Focus(direction) if move_mode.active => move_zone_manual(direction),
         Action::Focus(direction) => navigate(direction, false),
         Action::MoveWindow(direction) => navigate(direction, true),
     }
+}
+
+/// Tracks the interactive move mode: while active the arrow shortcuts move the
+/// focused window by zone (with magnetic repulsion) instead of moving focus.
+#[derive(Default)]
+struct MoveMode {
+    active: bool,
+    previous_overlay_visibility: bool,
+}
+
+impl MoveMode {
+    /// Toggles the mode. The overlay is shown while the mode is active so the
+    /// user gets visible feedback and the available keys stay on screen; the
+    /// previous visibility is restored when the mode is left.
+    fn toggle(
+        &mut self,
+        overlay_window: &overlay::OverlayWindow,
+        visibility: &mut app::overlay::OverlayState,
+    ) {
+        if self.active {
+            self.active = false;
+            visibility.set_visible(self.previous_overlay_visibility);
+            if self.previous_overlay_visibility {
+                overlay_window.show();
+            } else {
+                overlay_window.hide();
+            }
+            eprintln!("move mode: off");
+        } else {
+            self.active = true;
+            self.previous_overlay_visibility = visibility.is_visible();
+            visibility.set_visible(true);
+            overlay_window.show();
+            eprintln!("move mode: on");
+        }
+    }
+}
+
+/// Toggles native fullscreen (`AXFullScreen`) on the focused window.
+fn toggle_fullscreen() {
+    let Some(focused) = control::focused_window() else {
+        eprintln!("fullscreen: no focused window");
+        return;
+    };
+    match control::toggle_fullscreen(&focused.handle, focused.info.pid) {
+        Ok(true) => eprintln!("fullscreen: entered"),
+        Ok(false) => eprintln!("fullscreen: exited"),
+        Err(error) => eprintln!("fullscreen: {error}"),
+    }
+}
+
+/// Moves the focused window into the half of its display indicated by
+/// `direction`, repelling any window already occupying that half.
+fn move_zone_manual(direction: Direction) {
+    let Some(focused) = control::focused_window() else {
+        eprintln!("move zone: no focused window");
+        return;
+    };
+    let Some(bounds) = focused.info.bounds else {
+        eprintln!("move zone: focused window has no geometry");
+        return;
+    };
+    let active = displays::snapshot();
+    let Some(target) = display_assignment::assign(&active, bounds) else {
+        eprintln!("move zone: focused window is not on an active display");
+        return;
+    };
+    let Some(work_area) = work_area_of(&active, target) else {
+        eprintln!("move zone: display has no usable area");
+        return;
+    };
+
+    let mut eligible: Vec<(control::LayoutWindow, Rect)> = Vec::new();
+    for window in control::discover_layout_windows() {
+        if let Ok(rect) = app::window_eligibility::assess(&window, &active, target) {
+            eligible.push((window, rect));
+        }
+    }
+    eligible.sort_by(|a, b| compare_windows(a.0.info(), b.0.info()));
+    let rects: Vec<Rect> = eligible.iter().map(|(_, rect)| *rect).collect();
+    let ordered: Vec<control::LayoutWindow> =
+        eligible.into_iter().map(|(window, _)| window).collect();
+
+    let Some(current) = control::focused_index(&ordered) else {
+        eprintln!("move zone: focused window not found among eligible windows");
+        return;
+    };
+
+    apply_zone_move(&rects, &ordered, current, work_area, direction);
+}
+
+/// Zone-moves the focused window under automatic tiling: the geometry is
+/// applied directly and recorded as expected so no re-tile undoes it, and the
+/// tiling order is swapped with the repelled windows so a later re-tile keeps
+/// the new arrangement.
+fn move_zone_auto(direction: Direction, auto: &mut AutoManager) {
+    let Some(focused) = control::focused_window() else {
+        eprintln!("move zone: no focused window");
+        return;
+    };
+    let Some(bounds) = focused.info.bounds else {
+        eprintln!("move zone: focused window has no geometry");
+        return;
+    };
+    let active = displays::snapshot();
+    let Some(target) = display_assignment::assign(&active, bounds) else {
+        eprintln!("move zone: focused window is not on an active display");
+        return;
+    };
+    let Some(work_area) = work_area_of(&active, target) else {
+        eprintln!("move zone: display has no usable area");
+        return;
+    };
+
+    let order = auto.tiling.order_for(target).to_vec();
+    let windows = {
+        let observers = &mut auto.observers;
+        control::discover_tiling_windows(|pid, element| observers.resolve_identity(pid, element))
+    };
+
+    let mut eligible: Vec<(control::LayoutWindow, Rect)> = Vec::new();
+    for window in windows {
+        if let Ok(rect) = app::window_eligibility::assess(&window, &active, target) {
+            eligible.push((window, rect));
+        }
+    }
+    if eligible.len() < 2 {
+        return;
+    }
+
+    let position = |key: WindowKey| order.iter().position(|candidate| *candidate == key);
+    eligible.sort_by(|a, b| match (position(a.0.key()), position(b.0.key())) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => compare_windows(a.0.info(), b.0.info()),
+    });
+
+    let rects: Vec<Rect> = eligible.iter().map(|(_, rect)| *rect).collect();
+    let ordered: Vec<control::LayoutWindow> =
+        eligible.into_iter().map(|(window, _)| window).collect();
+
+    let Some(current) = control::focused_index(&ordered) else {
+        eprintln!("move zone: focused window not found among eligible windows");
+        return;
+    };
+
+    let Some(result) = apply_zone_move(&rects, &ordered, current, work_area, direction) else {
+        return;
+    };
+
+    auto.tiling.record_manual(target, &result.applied);
+    let focused_key = ordered[current].key();
+    for displaced in &result.displaced {
+        auto.tiling.swap_in_order(target, focused_key, *displaced);
+    }
+}
+
+/// Outcome of applying a zone move to real windows.
+struct ZoneMoveResult {
+    /// Windows whose geometry was written, with the geometry macOS applied.
+    applied: Vec<(WindowKey, Rect)>,
+    /// Keys of the repelled windows, in the order they were displaced.
+    displaced: Vec<WindowKey>,
+}
+
+/// Computes and applies a zone move for `ordered[current]`.
+///
+/// Returns `None` when the move would change nothing.
+fn apply_zone_move(
+    rects: &[Rect],
+    ordered: &[control::LayoutWindow],
+    current: usize,
+    work_area: Rect,
+    direction: Direction,
+) -> Option<ZoneMoveResult> {
+    let mut others = Vec::with_capacity(rects.len().saturating_sub(1));
+    let mut positions = Vec::with_capacity(rects.len().saturating_sub(1));
+    for (index, rect) in rects.iter().enumerate() {
+        if index == current {
+            continue;
+        }
+        others.push(*rect);
+        positions.push(index);
+    }
+
+    let outcome = movement::compute_move(work_area, rects[current], direction, &others)?;
+
+    let mut applied = Vec::with_capacity(outcome.displaced.len() + 1);
+    let mut displaced = Vec::with_capacity(outcome.displaced.len());
+
+    match control::set_bounds(&ordered[current].handle, outcome.focused) {
+        Ok(rect) => applied.push((ordered[current].key(), rect)),
+        Err(error) => eprintln!("move zone: {error}"),
+    }
+    for (other_index, rect) in &outcome.displaced {
+        let window_index = positions[*other_index];
+        displaced.push(ordered[window_index].key());
+        match control::set_bounds(&ordered[window_index].handle, *rect) {
+            Ok(applied_rect) => applied.push((ordered[window_index].key(), applied_rect)),
+            Err(error) => eprintln!("move zone: {error}"),
+        }
+    }
+
+    Some(ZoneMoveResult { applied, displaced })
 }
 
 /// Applies `layout` to the display containing the focused window.

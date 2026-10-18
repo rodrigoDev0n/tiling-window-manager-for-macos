@@ -16,6 +16,10 @@ pub enum Action {
     Focus(Direction),
     /// Swap the focused window's frame with its directional neighbour.
     MoveWindow(Direction),
+    /// Enter or leave the interactive move mode.
+    ToggleMoveMode,
+    /// Toggle native fullscreen on the focused window.
+    ToggleFullscreen,
 }
 
 /// A screen direction used by focus and move-window actions.
@@ -28,6 +32,18 @@ pub enum Direction {
     Right,
     Up,
     Down,
+}
+
+impl Direction {
+    /// The direction opposite to `self`.
+    pub const fn opposite(self) -> Self {
+        match self {
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -46,5 +62,18 @@ mod tests {
     fn directions_are_distinct_values() {
         assert_ne!(Direction::Left, Direction::Right);
         assert_ne!(Direction::Up, Direction::Down);
+    }
+
+    #[test]
+    fn opposite_directions_are_symmetric() {
+        for direction in [
+            Direction::Left,
+            Direction::Right,
+            Direction::Up,
+            Direction::Down,
+        ] {
+            assert_eq!(direction.opposite().opposite(), direction);
+        }
+        assert_ne!(Direction::Left.opposite(), Direction::Left);
     }
 }
