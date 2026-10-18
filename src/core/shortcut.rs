@@ -114,6 +114,18 @@ pub fn default_bindings() -> Vec<Binding> {
             description: "Rows layout".to_string(),
         },
         Binding {
+            key: Key::Char(' '),
+            modifiers: cmd_opt,
+            action: Action::ToggleMoveMode,
+            description: "Enter/leave move mode".to_string(),
+        },
+        Binding {
+            key: Key::Char('f'),
+            modifiers: cmd_opt,
+            action: Action::ToggleFullscreen,
+            description: "Toggle window fullscreen".to_string(),
+        },
+        Binding {
             key: Key::Left,
             modifiers: cmd_opt,
             action: Action::Focus(Direction::Left),
@@ -195,6 +207,12 @@ pub fn default_shortcuts() -> Vec<ShortcutGroup> {
             bindings
                 .iter()
                 .filter(|b| matches!(b.action, Action::SetLayout(_))),
+        ),
+        shortcut_group(
+            "Move and fullscreen",
+            bindings
+                .iter()
+                .filter(|b| matches!(b.action, Action::ToggleMoveMode | Action::ToggleFullscreen)),
         ),
         shortcut_group(
             "Focus and Windows",
@@ -290,6 +308,20 @@ mod tests {
                 .filter(|b| matches!(b.action, Action::MoveWindow(_)))
                 .count(),
             2
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| b.action == Action::ToggleMoveMode)
+                .count(),
+            1
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| b.action == Action::ToggleFullscreen)
+                .count(),
+            1
         );
     }
 

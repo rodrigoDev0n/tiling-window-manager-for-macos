@@ -33,6 +33,8 @@ ingeniería y [`specs/`](specs/README.md) para el índice completo.
 | **Integración nativa con macOS** | Solo APIs públicas de Accesibilidad, Core Graphics y AppKit. Sin frameworks privados. |
 | **Mosaico automático** | El gestor vuelve a organizar cada pantalla afectada cuando cambian ventanas o aplicaciones, con actualizaciones *debounced*, idempotentes y convergentes. |
 | **Múltiples diseños** | Master/Stack, columnas, filas y monocle. |
+| **Modo mover con imán** | Un atajo activa el modo mover: las flechas llevan la ventana enfocada a la mitad de pantalla elegida y repelen a la ventana de abajo al lado opuesto. |
+| **Pantalla completa** | Alterna el fullscreen nativo de macOS de la ventana enfocada. |
 | **Estado por pantalla** | Cada pantalla activa conserva su propio orden de mosaico y configuración de diseño durante la vida del proceso. |
 | **Atajos globales** | Teclas de acceso rápido funcionales y una superposición translúcida de atajos. |
 | **Basado en eventos** | Un bucle en primer plano consume eventos normalizados de ventanas y aplicaciones; sin hilos, temporizadores ni runtime asíncrono. |
@@ -169,7 +171,9 @@ modo que la lista mostrada y las acciones ejecutadas nunca divergen.
 | `⌘⌥C` | Diseño en columnas |
 | `⌘⌥R` | Diseño en filas |
 | `⌘⌥M` | Diseño monocle |
-| `⌘⌥←/→/↑/↓` | Mover el foco |
+| `⌘⌥Espacio` | Entrar o salir del modo mover |
+| `⌘⌥F` | Pantalla completa de la ventana enfocada |
+| `⌘⌥←/→/↑/↓` | Mover el foco (o la ventana, en modo mover) |
 | `⌘⌥⇧←/→` | Reordenar la ventana enfocada y reorganizar |
 
 ## Diseños
@@ -183,6 +187,27 @@ modo que la lista mostrada y las acciones ejecutadas nunca divergen.
 
 La `LayoutConfig` por defecto es `masterstack` con `outer_gap = 8.0`,
 `inner_gap = 8.0`, `master_ratio = 0.55` y `master_count = 1`.
+
+## Modo mover y pantalla completa
+
+`⌘⌥Espacio` alterna el **modo mover**. Mientras está activo, las flechas
+`⌘⌥←/→/↑/↓` mueven la ventana enfocada a la mitad de pantalla indicada
+(imán) en lugar de mover el foco:
+
+- La ventana enfocada pasa a ocupar toda la mitad hacia la que se mueve.
+- Si otra ventana ya ocupaba esa mitad, se **repela** a la mitad contraria:
+  con una sola ventana invadida se refleja hacia el lado opuesto conservando
+  su tamaño; con varias se apilan para llenar la mitad contraria.
+- El overlay se muestra al entrar en el modo y se restaura su visibilidad
+  anterior al salir.
+
+Con el mosaico automático activo, el intercambio también se refleja en el
+orden de tiling, de modo que un retile posterior respeta la nueva posición.
+Con `--no-auto`, el cambio es solo de geometría.
+
+`⌘⌥F` alterna el **pantalla completa nativa** de macOS (`AXFullScreen`) de la
+ventana enfocada. Las ventanas en pantalla completa siguen excluidas del
+mosaico; al salir vuelven a ser gestionables.
 
 ## Cómo funciona
 
@@ -239,6 +264,7 @@ src/
 │   ├── event.rs            # Eventos de dominio y WindowKey
 │   ├── geometry.rs         # Primitivas Rect / Size
 │   ├── layout*.rs          # Config de diseño, plan, informe de ejecución
+│   ├── movement.rs         # Movimiento por zonas con repelencia
 │   ├── navigation.rs       # Búsqueda direccional de vecinos
 │   ├── selector.rs         # Selección y ordenación de ventanas
 │   ├── shortcut.rs         # Tabla de enlaces (overlay + atajos)

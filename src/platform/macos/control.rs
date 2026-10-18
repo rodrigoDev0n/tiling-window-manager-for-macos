@@ -11,6 +11,7 @@ use std::fmt;
 use std::os::raw::c_void;
 
 use core_foundation::base::TCFType;
+use core_foundation::boolean::CFBoolean;
 use core_foundation::string::CFString;
 use core_foundation_sys::array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef};
 use core_foundation_sys::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
@@ -314,6 +315,46 @@ pub fn activate_application(pid: ProcessId) -> Result<(), ControlError> {
     };
     let _ = application.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
     Ok(())
+}
+
+/// Returns the native fullscreen state of `handle`, when the window exposes
+/// the `AXFullScreen` attribute.
+pub fn fullscreen_state(handle: &WindowHandle) -> Option<bool> {
+    windows::copy_bool(handle.as_ptr(), accessibility::AX_FULL_SCREEN_ATTRIBUTE)
+}
+
+/// Toggles native macOS fullscreen on `handle`.
+///
+/// The owning application is activated first, because macOS rejects
+/// `AXFullScreen` writes from a background application. Returns whether the
+/// window is now in fullscreen.
+pub fn toggle_fullscreen(handle: &WindowHandle, pid: ProcessId) -> Result<bool, ControlError> {
+    check_settable(handle, accessibility::AX_FULL_SCREEN_ATTRIBUTE)?;
+    let target = !fullscreen_state(handle).unwrap_or(false);
+
+    activate_application(pid)?;
+
+    let attribute = CFString::new(accessibility::AX_FULL_SCREEN_ATTRIBUTE);
+    let value = if target {
+        CFBoolean::true_value()
+    } else {
+        CFBoolean::false_value()
+    };
+    // SAFETY: `handle` is a valid element, `attribute` a valid CFString, and
+    // `value` is a borrowed singleton (no ownership transfer).
+    let error = unsafe {
+        accessibility::AXUIElementSetAttributeValue(
+            handle.as_ptr(),
+            attribute.as_concrete_TypeRef(),
+            value.as_CFTypeRef(),
+        )
+    };
+
+    if error == AX_ERROR_SUCCESS {
+        Ok(target)
+    } else {
+        Err(ControlError::from_ax(error))
+    }
 }
 
 /// Returns the index (into `windows`) of the currently focused window, if the

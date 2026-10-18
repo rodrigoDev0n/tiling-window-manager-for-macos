@@ -32,6 +32,11 @@ impl OverlayState {
         self.visible = !self.visible;
         self.visible
     }
+
+    /// Forces visibility to `visible`.
+    pub fn set_visible(&mut self, visible: bool) {
+        self.visible = visible;
+    }
 }
 
 /// Computes the top-left origin of the overlay inside `frame`.
@@ -101,6 +106,17 @@ mod tests {
         assert!(state.toggle());
         assert!(state.is_visible());
         assert!(!state.toggle());
+        assert!(!state.is_visible());
+    }
+
+    #[test]
+    fn set_visible_forces_the_requested_value() {
+        let mut state = OverlayState::new(false);
+        state.set_visible(true);
+        assert!(state.is_visible());
+        state.set_visible(true);
+        assert!(state.is_visible());
+        state.set_visible(false);
         assert!(!state.is_visible());
     }
 
