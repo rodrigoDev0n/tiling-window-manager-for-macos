@@ -96,6 +96,8 @@ pub enum LayoutType {
     Rows,
     /// All windows share the full usable area.
     Monocle,
+    /// Two columns with the windows stacked inside each column.
+    Quad,
 }
 
 impl LayoutType {
@@ -106,6 +108,7 @@ impl LayoutType {
             "columns" | "column" => Some(LayoutType::Columns),
             "rows" | "row" => Some(LayoutType::Rows),
             "monocle" => Some(LayoutType::Monocle),
+            "quad" | "grid" => Some(LayoutType::Quad),
             _ => None,
         }
     }
@@ -118,6 +121,7 @@ impl fmt::Display for LayoutType {
             LayoutType::Columns => "columns",
             LayoutType::Rows => "rows",
             LayoutType::Monocle => "monocle",
+            LayoutType::Quad => "quad",
         };
         write!(f, "{name}")
     }
@@ -299,6 +303,8 @@ mod tests {
         assert_eq!(LayoutType::parse("columns"), Some(LayoutType::Columns));
         assert_eq!(LayoutType::parse("rows"), Some(LayoutType::Rows));
         assert_eq!(LayoutType::parse("monocle"), Some(LayoutType::Monocle));
+        assert_eq!(LayoutType::parse("quad"), Some(LayoutType::Quad));
+        assert_eq!(LayoutType::parse("grid"), Some(LayoutType::Quad));
         assert_eq!(LayoutType::parse("bsp"), None);
     }
 
@@ -306,6 +312,7 @@ mod tests {
     fn layout_type_displays_lowercase_name() {
         assert_eq!(LayoutType::MasterStack.to_string(), "masterstack");
         assert_eq!(LayoutType::Monocle.to_string(), "monocle");
+        assert_eq!(LayoutType::Quad.to_string(), "quad");
     }
 
     #[test]

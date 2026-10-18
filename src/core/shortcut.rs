@@ -114,16 +114,10 @@ pub fn default_bindings() -> Vec<Binding> {
             description: "Rows layout".to_string(),
         },
         Binding {
-            key: Key::Char(' '),
+            key: Key::Char('q'),
             modifiers: cmd_opt,
-            action: Action::ToggleMoveMode,
-            description: "Enter/leave move mode".to_string(),
-        },
-        Binding {
-            key: Key::Char('f'),
-            modifiers: cmd_opt,
-            action: Action::ToggleFullscreen,
-            description: "Toggle window fullscreen".to_string(),
+            action: Action::SetLayout(LayoutType::Quad),
+            description: "Quad layout (2x2)".to_string(),
         },
         Binding {
             key: Key::Left,
@@ -293,7 +287,7 @@ mod tests {
                 .iter()
                 .filter(|b| matches!(b.action, Action::SetLayout(_)))
                 .count(),
-            4
+            5
         );
         assert_eq!(
             bindings
