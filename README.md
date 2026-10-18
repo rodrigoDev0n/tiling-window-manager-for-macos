@@ -32,7 +32,7 @@ ingeniería y [`specs/`](specs/README.md) para el índice completo.
 | --- | --- |
 | **Integración nativa con macOS** | Solo APIs públicas de Accesibilidad, Core Graphics y AppKit. Sin frameworks privados. |
 | **Mosaico automático** | El gestor vuelve a organizar cada pantalla afectada cuando cambian ventanas o aplicaciones, con actualizaciones *debounced*, idempotentes y convergentes. |
-| **Múltiples diseños** | Master/Stack, columnas, filas y monocle. |
+| **Múltiples diseños** | Master/Stack, columnas, filas, monocle y quad (2x2). |
 | **Estado por pantalla** | Cada pantalla activa conserva su propio orden de mosaico y configuración de diseño durante la vida del proceso. |
 | **Atajos globales** | Teclas de acceso rápido funcionales y una superposición translúcida de atajos. |
 | **Basado en eventos** | Un bucle en primer plano consume eventos normalizados de ventanas y aplicaciones; sin hilos, temporizadores ni runtime asíncrono. |
@@ -138,10 +138,10 @@ cargo run -- move --to <left|right|maximize|center>
 ### Opciones de `layout` y `apply`
 
 ```sh
-cargo run -- layout --layout <masterstack|columns|rows|monocle> [--display <id>] \
+cargo run -- layout --layout <masterstack|columns|rows|monocle|quad> [--display <id>] \
     [--outer-gap <f64>] [--inner-gap <f64>] [--ratio <f64>] [--master-count <usize>]
 
-cargo run -- apply <masterstack|columns|rows|monocle> [--display <id>] [--dry-run]
+cargo run -- apply <masterstack|columns|rows|monocle|quad> [--display <id>] [--dry-run]
 ```
 
 ### Gestor en primer plano
@@ -168,6 +168,7 @@ modo que la lista mostrada y las acciones ejecutadas nunca divergen.
 | `⌘⌥S` | Diseño Master/Stack |
 | `⌘⌥C` | Diseño en columnas |
 | `⌘⌥R` | Diseño en filas |
+| `⌘⌥Q` | Diseño quad (2x2) |
 | `⌘⌥M` | Diseño monocle |
 | `⌘⌥←/→/↑/↓` | Mover el foco |
 | `⌘⌥⇧←/→` | Reordenar la ventana enfocada y reorganizar |
@@ -180,6 +181,7 @@ modo que la lista mostrada y las acciones ejecutadas nunca divergen.
 | `columns` | Columnas verticales de ancho igual. |
 | `rows` | Filas horizontales de alto igual. |
 | `monocle` | Todas las ventanas comparten el área útil completa. |
+| `quad` | Dos columnas: la primera mitad de ventanas a la izquierda y la segunda a la derecha, cada una apilada. Con 4 ventanas queda un 2x2. |
 
 La `LayoutConfig` por defecto es `masterstack` con `outer_gap = 8.0`,
 `inner_gap = 8.0`, `master_ratio = 0.55` y `master_count = 1`.
@@ -247,6 +249,7 @@ src/
 │   ├── master_stack.rs
 │   ├── columns.rs
 │   ├── rows.rs
+│   ├── quad.rs
 │   └── monocle.rs
 ├── commands/               # Parseo y despacho de CLI
 ├── error.rs                # Tipos de error de la aplicación

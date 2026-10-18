@@ -76,13 +76,13 @@ fn print_usage() {
     println!("  <display-id>    CGDirectDisplayID in decimal, or 0x-prefixed hex.");
     println!();
     println!("layout options:");
-    println!("  --layout <masterstack|columns|rows|monocle>");
+    println!("  --layout <masterstack|columns|rows|monocle|quad>");
     println!("  --display <id>    Only windows on this display (default: main).");
     println!("  --outer-gap <f64>  --inner-gap <f64>");
     println!("  --ratio <f64>      --master-count <usize>");
     println!();
     println!("apply usage:");
-    println!("  apply <master-stack|columns|rows|monocle> [--display <id>] [--dry-run]");
+    println!("  apply <master-stack|columns|rows|monocle|quad> [--display <id>] [--dry-run]");
 }
 
 fn permissions() -> Result<(), AppError> {
@@ -234,7 +234,7 @@ fn parse_layout_args(args: &[String]) -> Result<LayoutOptions, AppError> {
                 let value = flag_value(args, index, "--layout")?;
                 options.layout = Some(LayoutType::parse(value).ok_or_else(|| {
                     AppError::InvalidArgument(format!(
-                        "invalid --layout value: {value} (expected masterstack, columns, rows or monocle)"
+                        "invalid --layout value: {value} (expected masterstack, columns, rows, monocle or quad)"
                     ))
                 })?);
                 index += 2;
@@ -349,12 +349,13 @@ struct ApplyOptions {
 fn parse_apply_args(args: &[String]) -> Result<ApplyOptions, AppError> {
     let layout_name = args.first().ok_or_else(|| {
         AppError::InvalidArgument(
-            "apply requires a layout name (master-stack, columns, rows or monocle)".to_string(),
+            "apply requires a layout name (master-stack, columns, rows, monocle or quad)"
+                .to_string(),
         )
     })?;
     let layout = LayoutType::parse(layout_name).ok_or_else(|| {
         AppError::InvalidArgument(format!(
-            "invalid apply layout: {layout_name} (expected master-stack, columns, rows or monocle)"
+            "invalid apply layout: {layout_name} (expected master-stack, columns, rows, monocle or quad)"
         ))
     })?;
 
