@@ -193,6 +193,19 @@ impl TilingState {
         }
     }
 
+    /// Records geometry applied by an explicit shortcut (zone move) so the
+    /// resulting events are treated as self-generated and no re-tile undoes
+    /// the manual placement.
+    ///
+    /// The settle timer is not reset: the display is not dirty, so nothing is
+    /// scheduled until a genuine window change marks it again.
+    pub fn record_manual(&mut self, display: DisplayId, applied: &[(WindowKey, Rect)]) {
+        self.dirty.remove(&display);
+        for (key, rect) in applied {
+            self.expected.insert(*key, *rect);
+        }
+    }
+
     fn observe_window(&mut self, event: &WindowEvent, displays: &[Display]) {
         match event {
             WindowEvent::Created { pid, wid, bounds } => {
@@ -438,6 +451,21 @@ mod tests {
         state.observe(&moved(1, 1, Rect::new(200.0, 200.0, 300.0, 300.0)), &active);
         assert_eq!(state.due(now), vec![]);
         assert_eq!(state.due(now + RETILE_SETTLE_INTERVAL), vec![DisplayId(1)]);
+    }
+
+    #[test]
+    fn manual_placement_is_suppressed_without_scheduling_a_retile() {
+        let mut state = TilingState::new();
+        let active = displays();
+        let now = Instant::now();
+        let target = Rect::new(720.0, 25.0, 720.0, 875.0);
+        state.observe(&created(1, 1, Rect::new(10.0, 10.0, 100.0, 100.0)), &active);
+        state.record_manual(DisplayId(1), &[(key(1, 1), target)]);
+
+        // The zone move's own geometry events do not mark the display dirty.
+        state.observe(&moved(1, 1, target), &active);
+        assert!(state.due(now).is_empty());
+        assert_eq!(state.diagnostics().suppressed_geometry_events, 1);
     }
 
     #[test]

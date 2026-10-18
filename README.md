@@ -170,7 +170,9 @@ modo que la lista mostrada y las acciones ejecutadas nunca divergen.
 | `⌘⌥R` | Diseño en filas |
 | `⌘⌥Q` | Diseño quad (2x2) |
 | `⌘⌥M` | Diseño monocle |
-| `⌘⌥←/→/↑/↓` | Mover el foco |
+| `⌘⌥Espacio` | Entrar o salir del modo mover |
+| `⌘⌥F` | Pantalla completa de la ventana enfocada |
+| `⌘⌥←/→/↑/↓` | Mover el foco (o la ventana, en modo mover) |
 | `⌘⌥⇧←/→` | Reordenar la ventana enfocada y reorganizar |
 
 ## Diseños
@@ -185,6 +187,27 @@ modo que la lista mostrada y las acciones ejecutadas nunca divergen.
 
 La `LayoutConfig` por defecto es `masterstack` con `outer_gap = 8.0`,
 `inner_gap = 8.0`, `master_ratio = 0.55` y `master_count = 1`.
+
+## Modo mover y pantalla completa
+
+`⌘⌥Espacio` alterna el **modo mover**. Mientras está activo, las flechas
+`⌘⌥←/→/↑/↓` mueven la ventana enfocada a la mitad de pantalla indicada
+(imán) en lugar de mover el foco:
+
+- La ventana enfocada pasa a ocupar toda la mitad hacia la que se mueve.
+- Si otra ventana ya ocupaba esa mitad, se **repela** a la mitad contraria:
+  con una sola ventana invadida se refleja hacia el lado opuesto conservando
+  su tamaño; con varias se apilan para llenar la mitad contraria.
+- El overlay se muestra al entrar en el modo y se restaura su visibilidad
+  anterior al salir.
+
+Con el mosaico automático activo, el intercambio también se refleja en el
+orden de tiling, de modo que un retile posterior respeta la nueva posición.
+Con `--no-auto`, el cambio es solo de geometría.
+
+`⌘⌥F` alterna el **pantalla completa nativa** de macOS (`AXFullScreen`) de la
+ventana enfocada. Las ventanas en pantalla completa siguen excluidas del
+mosaico; al salir vuelven a ser gestionables.
 
 ## Cómo funciona
 
@@ -241,6 +264,7 @@ src/
 │   ├── event.rs            # Eventos de dominio y WindowKey
 │   ├── geometry.rs         # Primitivas Rect / Size
 │   ├── layout*.rs          # Config de diseño, plan, informe de ejecución
+│   ├── movement.rs         # Movimiento por zonas con repelencia
 │   ├── navigation.rs       # Búsqueda direccional de vecinos
 │   ├── selector.rs         # Selección y ordenación de ventanas
 │   ├── shortcut.rs         # Tabla de enlaces (overlay + atajos)

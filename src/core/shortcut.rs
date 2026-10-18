@@ -203,6 +203,12 @@ pub fn default_shortcuts() -> Vec<ShortcutGroup> {
                 .filter(|b| matches!(b.action, Action::SetLayout(_))),
         ),
         shortcut_group(
+            "Move and fullscreen",
+            bindings
+                .iter()
+                .filter(|b| matches!(b.action, Action::ToggleMoveMode | Action::ToggleFullscreen)),
+        ),
+        shortcut_group(
             "Focus and Windows",
             bindings
                 .iter()
@@ -296,6 +302,20 @@ mod tests {
                 .filter(|b| matches!(b.action, Action::MoveWindow(_)))
                 .count(),
             2
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| b.action == Action::ToggleMoveMode)
+                .count(),
+            1
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| b.action == Action::ToggleFullscreen)
+                .count(),
+            1
         );
     }
 
