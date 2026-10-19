@@ -120,18 +120,6 @@ pub fn default_bindings() -> Vec<Binding> {
             description: "Quad layout (2x2)".to_string(),
         },
         Binding {
-            key: Key::Char(' '),
-            modifiers: cmd_opt,
-            action: Action::ToggleMoveMode,
-            description: "Enter/leave move mode".to_string(),
-        },
-        Binding {
-            key: Key::Char('f'),
-            modifiers: cmd_opt,
-            action: Action::ToggleFullscreen,
-            description: "Toggle window fullscreen".to_string(),
-        },
-        Binding {
             key: Key::Left,
             modifiers: cmd_opt,
             action: Action::Focus(Direction::Left),
@@ -326,6 +314,20 @@ mod tests {
                 .filter(|b| matches!(b.action, Action::MoveWindow(_)))
                 .count(),
             4
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| b.action == Action::ToggleMoveMode)
+                .count(),
+            1
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| b.action == Action::ToggleFullscreen)
+                .count(),
+            1
         );
         assert_eq!(
             bindings

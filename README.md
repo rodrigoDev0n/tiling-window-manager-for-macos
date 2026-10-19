@@ -33,8 +33,6 @@ ingeniería y [`specs/`](specs/README.md) para el índice completo.
 | **Integración nativa con macOS** | Solo APIs públicas de Accesibilidad, Core Graphics y AppKit. Sin frameworks privados. |
 | **Mosaico automático** | El gestor vuelve a organizar cada pantalla afectada cuando cambian ventanas o aplicaciones, con actualizaciones *debounced*, idempotentes y convergentes. |
 | **Múltiples diseños** | Master/Stack, columnas, filas, monocle y quad (2x2). |
-| **Modo mover con imán** | Un atajo activa el modo mover: las flechas llevan la ventana enfocada a la mitad de pantalla elegida y repelen a la ventana de abajo al lado opuesto. |
-| **Pantalla completa** | Alterna el fullscreen nativo de macOS de la ventana enfocada. |
 | **Estado por pantalla** | Cada pantalla activa conserva su propio orden de mosaico y configuración de diseño durante la vida del proceso. |
 | **Atajos globales** | Teclas de acceso rápido funcionales y una superposición translúcida de atajos. |
 | **Basado en eventos** | Un bucle en primer plano consume eventos normalizados de ventanas y aplicaciones; sin hilos, temporizadores ni runtime asíncrono. |
@@ -175,7 +173,7 @@ modo que la lista mostrada y las acciones ejecutadas nunca divergen.
 | `⌘⌥Espacio` | Entrar o salir del modo mover |
 | `⌘⌥F` | Pantalla completa de la ventana enfocada |
 | `⌘⌥←/→/↑/↓` | Mover el foco (o la ventana, en modo mover) |
-| `⌘⌥⇧←/→/↑/↓` | Mover la ventana enfocada |
+| `⌘⌥⇧←/→` | Reordenar la ventana enfocada y reorganizar |
 
 ## Diseños
 
