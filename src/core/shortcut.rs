@@ -155,6 +155,18 @@ pub fn default_bindings() -> Vec<Binding> {
             action: Action::MoveWindow(Direction::Right),
             description: "Move window right".to_string(),
         },
+        Binding {
+            key: Key::Up,
+            modifiers: cmd_opt_shift,
+            action: Action::MoveWindow(Direction::Up),
+            description: "Move window up".to_string(),
+        },
+        Binding {
+            key: Key::Down,
+            modifiers: cmd_opt_shift,
+            action: Action::MoveWindow(Direction::Down),
+            description: "Move window down".to_string(),
+        },
     ]
 }
 
@@ -301,7 +313,21 @@ mod tests {
                 .iter()
                 .filter(|b| matches!(b.action, Action::MoveWindow(_)))
                 .count(),
-            2
+            4
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| b.action == Action::ToggleMoveMode)
+                .count(),
+            1
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| b.action == Action::ToggleFullscreen)
+                .count(),
+            1
         );
         assert_eq!(
             bindings
@@ -364,6 +390,22 @@ mod tests {
             description: String::new(),
         };
         assert_eq!(format_binding(&shift), "⌘⌥⇧←");
+
+        let shift_up = Binding {
+            key: Key::Up,
+            modifiers: Modifiers::command_option_shift(),
+            action: Action::MoveWindow(Direction::Up),
+            description: String::new(),
+        };
+        assert_eq!(format_binding(&shift_up), "⌘⌥⇧↑");
+
+        let shift_down = Binding {
+            key: Key::Down,
+            modifiers: Modifiers::command_option_shift(),
+            action: Action::MoveWindow(Direction::Down),
+            description: String::new(),
+        };
+        assert_eq!(format_binding(&shift_down), "⌘⌥⇧↓");
     }
 
     #[test]
