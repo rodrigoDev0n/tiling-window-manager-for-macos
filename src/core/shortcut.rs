@@ -90,6 +90,12 @@ pub fn default_bindings() -> Vec<Binding> {
             description: "Show or hide this overlay".to_string(),
         },
         Binding {
+            key: Key::Char('d'),
+            modifiers: cmd_opt,
+            action: Action::ToggleDesktop,
+            description: "Show or hide the desktop icons".to_string(),
+        },
+        Binding {
             key: Key::Char('m'),
             modifiers: cmd_opt,
             action: Action::SetLayout(LayoutType::Monocle),
@@ -221,6 +227,12 @@ pub fn default_shortcuts() -> Vec<ShortcutGroup> {
                 .filter(|b| b.action == Action::ToggleOverlay),
         ),
         shortcut_group(
+            "Desktop",
+            bindings
+                .iter()
+                .filter(|b| b.action == Action::ToggleDesktop),
+        ),
+        shortcut_group(
             "Layouts",
             bindings
                 .iter()
@@ -303,6 +315,13 @@ mod tests {
             bindings
                 .iter()
                 .filter(|b| b.action == Action::ToggleOverlay)
+                .count(),
+            1
+        );
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|b| b.action == Action::ToggleDesktop)
                 .count(),
             1
         );
@@ -413,6 +432,16 @@ mod tests {
             .iter()
             .flat_map(|g| &g.shortcuts)
             .any(|s| s.keys == "⌘⌥-");
+        assert!(has_toggle);
+    }
+
+    #[test]
+    fn default_set_contains_the_desktop_toggle() {
+        let groups = default_shortcuts();
+        let has_toggle = groups
+            .iter()
+            .flat_map(|g| &g.shortcuts)
+            .any(|s| s.keys == "⌘⌥D" && s.description == "Show or hide the desktop icons");
         assert!(has_toggle);
     }
 

@@ -38,6 +38,16 @@ pub fn ax_point_to_appkit(point: Point, main_height: f64) -> Option<Point> {
     appkit_point_to_ax(point, main_height)
 }
 
+/// Converts an AX rect (top-left origin, Y down) to AppKit coordinates
+/// (bottom-left origin, Y up), given the main display height in points.
+///
+/// The vertical flip is an involution, so this function is mathematically
+/// identical to [`appkit_to_ax`]; the separate name documents which direction
+/// the caller intends.
+pub fn ax_to_appkit(rect: Rect, main_height: f64) -> Option<Rect> {
+    appkit_to_ax(rect, main_height)
+}
+
 fn valid_height(main_height: f64) -> bool {
     main_height.is_finite() && main_height > 0.0
 }
@@ -116,5 +126,18 @@ mod tests {
             appkit_to_ax(Rect::new(0.0, 0.0, 0.0, 100.0), MAIN_HEIGHT),
             None
         );
+    }
+
+    #[test]
+    fn ax_to_appkit_round_trips_with_appkit_to_ax() {
+        let ax = Rect::new(100.0, 25.0, 800.0, 600.0);
+        let appkit = ax_to_appkit(ax, MAIN_HEIGHT).expect("converted");
+        assert_eq!(appkit_to_ax(appkit, MAIN_HEIGHT), Some(ax));
+        assert_eq!(ax_to_appkit(appkit, MAIN_HEIGHT), Some(ax));
+    }
+
+    #[test]
+    fn ax_to_appkit_rejects_invalid_input() {
+        assert_eq!(ax_to_appkit(Rect::new(0.0, 0.0, 100.0, 100.0), 0.0), None);
     }
 }

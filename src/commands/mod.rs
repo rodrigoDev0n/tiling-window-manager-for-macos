@@ -21,7 +21,7 @@ use crate::core::shortcut;
 use crate::core::window::{ProcessId, WindowId, WindowInfo};
 use crate::error::AppError;
 use crate::platform::macos::accessibility;
-use crate::platform::macos::{control, displays, hotkey, observers, overlay, windows};
+use crate::platform::macos::{control, desktop, displays, hotkey, observers, overlay, windows};
 
 /// Executes the command described by `args` (excluding the program name).
 pub fn run(args: &[String]) -> Result<(), AppError> {
@@ -1115,6 +1115,11 @@ fn run_manager(args: &[String]) -> Result<(), AppError> {
     install_interrupt_handler();
 
     overlay::prepare_application().map_err(map_overlay_error)?;
+
+    // SPEC-011 startup order: config, wallpaper selection, then one
+    // background window per display with the desktop hidden by default.
+    let mut desktop_controller = DesktopController::create();
+
     let window = create_overlay_window()?;
     let mut visibility = app::overlay::OverlayState::new(true);
     window.show();
@@ -1133,18 +1138,102 @@ fn run_manager(args: &[String]) -> Result<(), AppError> {
         }
     };
 
+    if desktop_controller.is_active() {
+        println!(
+            "Desktop background active; desktop hidden. Press ⌘⌥D to show or hide the desktop icons."
+        );
+    }
     if auto {
         println!("Window manager active (automatic tiling). Overlay shown. Ctrl+C to quit.");
-        run_auto_manager(&window, &mut visibility, hotkeys.as_ref());
+        run_auto_manager(
+            &window,
+            &mut visibility,
+            hotkeys.as_ref(),
+            &mut desktop_controller,
+        );
     } else {
         println!("Window manager active. Overlay shown. Ctrl+C to quit.");
-        run_manual_manager(&window, &mut visibility, hotkeys.as_ref());
+        run_manual_manager(
+            &window,
+            &mut visibility,
+            hotkeys.as_ref(),
+            &mut desktop_controller,
+        );
     }
 
     drop(hotkeys);
     drop(window);
+    drop(desktop_controller);
     println!("Stopped.");
     Ok(())
+}
+
+/// Owns the SPEC-011 desktop background and its visibility state for the
+/// duration of `run`.
+struct DesktopController {
+    background: Option<desktop::DesktopBackground>,
+    state: app::desktop::DesktopState,
+}
+
+impl DesktopController {
+    /// Loads the configuration, resolves the background (wallpaper image or
+    /// flat color), and creates the native background windows with the
+    /// desktop hidden (SPEC-011 FR-009).
+    ///
+    /// Never fails: a total native failure leaves `background` as `None`,
+    /// which turns `ToggleDesktop` into a reported no-op (FR-010).
+    fn create() -> Self {
+        let settings = crate::config::Settings::load();
+        let (background, diagnostics) =
+            app::desktop::resolve_background(&settings, app::desktop::session_random());
+        for diagnostic in &diagnostics {
+            eprintln!("desktop: {diagnostic}");
+        }
+
+        let active = displays::snapshot();
+        let native = match desktop::DesktopBackground::create(&active, &background) {
+            Ok(native) => {
+                for diagnostic in native.diagnostics() {
+                    eprintln!("desktop: {diagnostic}");
+                }
+                Some(native)
+            }
+            Err(error) => {
+                eprintln!("desktop: background unavailable: {error}");
+                None
+            }
+        };
+
+        Self {
+            background: native,
+            state: app::desktop::DesktopState::default(),
+        }
+    }
+
+    /// Whether at least one display shows a background window.
+    fn is_active(&self) -> bool {
+        self.background
+            .as_ref()
+            .is_some_and(desktop::DesktopBackground::is_active)
+    }
+
+    /// Flips the desktop visibility and applies it to every display
+    /// (SPEC-011 FR-007).
+    fn toggle(&mut self) {
+        let visible = self.state.toggle();
+        match &self.background {
+            Some(background) => background.set_desktop_visible(visible),
+            None => eprintln!("desktop: toggle unavailable; no background window"),
+        }
+        eprintln!(
+            "desktop: {}",
+            if visible {
+                "desktop icons shown"
+            } else {
+                "desktop icons hidden"
+            }
+        );
+    }
 }
 
 /// Runs the SPEC-008 foreground loop: overlay plus shortcuts, no automatic
@@ -1153,13 +1242,14 @@ fn run_manual_manager(
     window: &overlay::OverlayWindow,
     visibility: &mut app::overlay::OverlayState,
     hotkeys: Option<&hotkey::HotkeySet>,
+    desktop: &mut DesktopController,
 ) {
     let mut move_mode = MoveMode::default();
     while FOREGROUND_RUNNING.load(Ordering::SeqCst) {
         overlay::pump_events(0.1);
         if let Some(set) = hotkeys {
             for action in set.take_pending() {
-                execute_action(action, window, visibility, &mut move_mode);
+                execute_action(action, window, visibility, &mut move_mode, desktop);
             }
         }
     }
@@ -1171,6 +1261,7 @@ fn run_auto_manager(
     window: &overlay::OverlayWindow,
     visibility: &mut app::overlay::OverlayState,
     hotkeys: Option<&hotkey::HotkeySet>,
+    desktop: &mut DesktopController,
 ) {
     let mut auto = AutoManager::new();
     let mut move_mode = MoveMode::default();
@@ -1187,7 +1278,14 @@ fn run_auto_manager(
         overlay::pump_events(0.05);
         if let Some(set) = hotkeys {
             for action in set.take_pending() {
-                execute_action_auto(action, window, visibility, &mut auto, &mut move_mode);
+                execute_action_auto(
+                    action,
+                    window,
+                    visibility,
+                    &mut auto,
+                    &mut move_mode,
+                    desktop,
+                );
             }
         }
         auto.pump();
@@ -1413,12 +1511,14 @@ fn execute_action_auto(
     visibility: &mut app::overlay::OverlayState,
     auto: &mut AutoManager,
     move_mode: &mut MoveMode,
+    desktop: &mut DesktopController,
 ) {
     match action {
         Action::ToggleOverlay => toggle_overlay(overlay_window, visibility),
         Action::SetLayout(layout) => auto_set_layout(layout, auto),
         Action::ToggleMoveMode => move_mode.toggle(overlay_window, visibility),
         Action::ToggleFullscreen => toggle_fullscreen(),
+        Action::ToggleDesktop => desktop.toggle(),
         Action::Focus(direction) if move_mode.active => move_zone_auto(direction, auto),
         Action::Focus(direction) => auto_navigate(direction, false, auto),
         Action::MoveWindow(direction) => auto_navigate(direction, true, auto),
@@ -1556,12 +1656,14 @@ fn execute_action(
     overlay_window: &overlay::OverlayWindow,
     visibility: &mut app::overlay::OverlayState,
     move_mode: &mut MoveMode,
+    desktop: &mut DesktopController,
 ) {
     match action {
         Action::ToggleOverlay => toggle_overlay(overlay_window, visibility),
         Action::SetLayout(layout) => apply_layout_action(layout),
         Action::ToggleMoveMode => move_mode.toggle(overlay_window, visibility),
         Action::ToggleFullscreen => toggle_fullscreen(),
+        Action::ToggleDesktop => desktop.toggle(),
         Action::Focus(direction) if move_mode.active => move_zone_manual(direction),
         Action::Focus(direction) => navigate(direction, false),
         Action::MoveWindow(direction) => navigate(direction, true),

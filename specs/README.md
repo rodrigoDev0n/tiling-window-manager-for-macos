@@ -19,6 +19,7 @@ Development workflow in `AGENTS.md`).
 | [SPEC-007](007-shortcut-overlay.md) | Shortcut overlay window | Approved |
 | [SPEC-008](008-shortcut-actions.md) | Shortcut actions | Implemented |
 | [SPEC-009](009-automatic-tiling.md) | Automatic tiling | Implemented |
+| [SPEC-011](011-desktop-wallpaper.md) | Desktop wallpaper and desktop visibility | Implemented |
 
 ## Numbering and supersession notes
 
@@ -28,6 +29,9 @@ Development workflow in `AGENTS.md`).
   only.
 - SPEC-009 supersedes the SPEC-005 rule that automatic tiling is out of scope
   and the SPEC-008 FR-005 rule that `SetLayout` does not persist state.
+- SPEC-011 skips the SPEC-010 slot (reserved for floating windows /
+  per-application rules) and supersedes the config-file restriction in the
+  SPEC-008/009 out-of-scope sections.
 
 ## Suggested next
 

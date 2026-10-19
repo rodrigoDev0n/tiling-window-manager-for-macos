@@ -1,5 +1,6 @@
 mod app;
 mod commands;
+mod config;
 mod core;
 mod error;
 mod layouts;

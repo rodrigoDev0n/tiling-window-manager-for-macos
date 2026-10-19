@@ -78,6 +78,17 @@ pub fn work_area_for_window(window: Rect) -> Option<Rect> {
     coordinates::appkit_to_ax(nsrect_to_rect(screen.visibleFrame()), primary_height)
 }
 
+/// Returns the height in points of the primary (menu-bar) screen.
+///
+/// Used as the reference height for canonical/AppKit coordinate conversion.
+/// Returns `None` off the main thread or when no screen is reported.
+pub fn main_screen_height() -> Option<f64> {
+    let mtm = MainThreadMarker::new()?;
+    let screens = NSScreen::screens(mtm);
+    let height = screens.iter().next()?.frame().size.height;
+    (height.is_finite() && height > 0.0).then_some(height)
+}
+
 fn screen_number(screen: &NSScreen) -> Option<u32> {
     let key = NSString::from_str("NSScreenNumber");
     let description = screen.deviceDescription();

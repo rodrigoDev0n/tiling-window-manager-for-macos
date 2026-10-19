@@ -35,6 +35,7 @@ ingeniería y [`specs/`](specs/README.md) para el índice completo.
 | **Múltiples diseños** | Master/Stack, columnas, filas, monocle y quad (2x2). |
 | **Modo mover con imán** | Un atajo activa el modo mover: las flechas llevan la ventana enfocada a la mitad de pantalla elegida y repelen a la ventana de abajo al lado opuesto. |
 | **Pantalla completa** | Alterna el fullscreen nativo de macOS de la ventana enfocada. |
+| **Escritorio propio** | Fondo de escritorio desde una carpeta configurable (imagen aleatoria por sesión) o color plano, con los iconos de Finder ocultos por defecto y atajo para mostrarlos/ocultarlos. |
 | **Estado por pantalla** | Cada pantalla activa conserva su propio orden de mosaico y configuración de diseño durante la vida del proceso. |
 | **Atajos globales** | Teclas de acceso rápido funcionales y una superposición translúcida de atajos. |
 | **Basado en eventos** | Un bucle en primer plano consume eventos normalizados de ventanas y aplicaciones; sin hilos, temporizadores ni runtime asíncrono. |
@@ -174,6 +175,7 @@ modo que la lista mostrada y las acciones ejecutadas nunca divergen.
 | `⌘⌥M` | Diseño monocle |
 | `⌘⌥Espacio` | Entrar o salir del modo mover |
 | `⌘⌥F` | Pantalla completa de la ventana enfocada |
+| `⌘⌥D` | Mostrar u ocultar los iconos del escritorio |
 | `⌘⌥←/→/↑/↓` | Mover el foco (o la ventana, en modo mover) |
 | `⌘⌥⇧←/→/↑/↓` | Mover la ventana enfocada |
 
@@ -210,6 +212,35 @@ Con `--no-auto`, el cambio es solo de geometría.
 `⌘⌥F` alterna el **pantalla completa nativa** de macOS (`AXFullScreen`) de la
 ventana enfocada. Las ventanas en pantalla completa siguen excluidas del
 mosaico; al salir vuelven a ser gestionables.
+
+## Escritorio: fondo e iconos
+
+Al ejecutar `run`, el gestor dibuja su **propio fondo de escritorio** con una
+ventana borderless por pantalla activa, situada a nivel de escritorio (detrás
+de todas las ventanas normales y por encima de los iconos de Finder). Por
+defecto los iconos del escritorio quedan **ocultos**; `⌘⌥D` alterna su
+visibilidad sin eliminar nunca el fondo del gestor.
+
+La imagen de fondo se elige **al azar por sesión** desde una carpeta
+configurada. La configuración se lee de
+`$XDG_CONFIG_HOME/tiling_window/config.toml` (o, si `XDG_CONFIG_HOME` no está
+definido, de `~/.config/tiling_window/config.toml`):
+
+```toml
+wallpaper_folder = "/Users/me/Pictures/Wallpapers"
+background_color = "#1E1E1E"
+```
+
+- `wallpaper_folder`: carpeta con las imágenes candidatas (png, jpg, jpeg,
+  heic, tiff, tif, bmp, gif). No se busca de forma recursiva.
+- `background_color`: color plano `#RRGGBB` usado como fondo cuando no hay
+  carpeta configurada, la carpeta está vacía/ilegible o una imagen no se puede
+  decodificar (en ese caso solo para la pantalla afectada, con diagnóstico).
+  El valor por defecto es `#1E1E1E`.
+
+Un archivo ausente no es un error (aplican los valores por defecto); un
+archivo inválido produce un diagnóstico y vuelve a los valores por defecto
+sin abortar el proceso.
 
 ## Cómo funciona
 
@@ -248,6 +279,7 @@ src/
 │   ├── layout_planner.rs   # Construye planes de diseño a partir del estado
 │   ├── layout_executor.rs  # Aplica planes, registra la geometría esperada
 │   ├── overlay.rs          # Contenido/estado del overlay
+│   ├── desktop.rs          # Selección de wallpaper/color y estado del escritorio
 │   └── ...
 ├── platform/macos/         # Todo el código de AppKit / Carbon / Accesibilidad
 │   ├── accessibility.rs    # Comprobación de permisos, helpers de AX
@@ -258,6 +290,7 @@ src/
 │   ├── observers.rs        # Observadores de eventos nativos
 │   ├── hotkey.rs           # Registro de atajos globales
 │   ├── overlay.rs          # NSWindow del overlay
+│   ├── desktop.rs          # Ventanas de fondo de escritorio
 │   └── core_graphics.rs    # Enlaces de Core Graphics
 ├── core/                   # Modelos de dominio independientes de la plataforma
 │   ├── action.rs           # Acciones y direcciones
@@ -277,6 +310,7 @@ src/
 │   ├── rows.rs
 │   ├── quad.rs
 │   └── monocle.rs
+├── config/                 # Configuración TOML del usuario
 ├── commands/               # Parseo y despacho de CLI
 ├── error.rs                # Tipos de error de la aplicación
 └── ...
@@ -330,6 +364,7 @@ especificación relevante completa antes de implementar.
 | [SPEC-007](specs/007-shortcut-overlay.md) | Ventana de superposición de atajos | Aprobada |
 | [SPEC-008](specs/008-shortcut-actions.md) | Acciones de atajos | Implementada |
 | [SPEC-009](specs/009-automatic-tiling.md) | Mosaico automático | Implementada |
+| [SPEC-011](specs/011-desktop-wallpaper.md) | Fondo de escritorio y visibilidad del escritorio | Implementada |
 
 Consulta [`specs/README.md`](specs/README.md) para notas de numeración y
 sustitución.

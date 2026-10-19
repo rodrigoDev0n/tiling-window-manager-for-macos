@@ -20,6 +20,8 @@ pub enum Action {
     ToggleMoveMode,
     /// Toggle native fullscreen on the focused window.
     ToggleFullscreen,
+    /// Show or hide the Finder desktop icons over the manager's background.
+    ToggleDesktop,
 }
 
 /// A screen direction used by focus and move-window actions.
