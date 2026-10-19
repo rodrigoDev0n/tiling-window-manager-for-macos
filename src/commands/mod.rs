@@ -1140,7 +1140,7 @@ fn run_manager(args: &[String]) -> Result<(), AppError> {
 
     if desktop_controller.is_active() {
         println!(
-            "Desktop background active; desktop hidden. Press ⌘⌥D to show or hide the desktop icons."
+            "Desktop background active; desktop icons and menu bar hidden. Press ⌘⌥D to toggle them."
         );
     }
     if auto {
@@ -1228,9 +1228,9 @@ impl DesktopController {
         eprintln!(
             "desktop: {}",
             if visible {
-                "desktop icons shown"
+                "desktop icons and menu bar shown"
             } else {
-                "desktop icons hidden"
+                "desktop icons and menu bar hidden"
             }
         );
     }

@@ -99,6 +99,28 @@ pub fn main_display(displays: &[Display]) -> Option<&Display> {
     displays.iter().find(|display| display.main)
 }
 
+/// Smallest top inset treated as a real menu-bar strip (SPEC-012 FR-001).
+/// Values below this are floating-point noise, not a reserved band.
+const MIN_MENU_BAR_INSET: f64 = 1.0;
+
+/// Returns the menu-bar strip of `display`: the top band of `bounds` that
+/// `usable` leaves free (canonical coordinates, y-down).
+///
+/// Returns `None` when the usable area touches the top edge, i.e. there is
+/// no strip to cover.
+pub fn menu_bar_strip(display: &Display) -> Option<Rect> {
+    let inset = display.usable.origin.y - display.bounds.origin.y;
+    if inset.is_nan() || inset <= MIN_MENU_BAR_INSET {
+        return None;
+    }
+    Some(Rect::new(
+        display.bounds.origin.x,
+        display.bounds.origin.y,
+        display.bounds.size.width,
+        inset,
+    ))
+}
+
 fn contains_rect(outer: Rect, inner: Rect) -> bool {
     inner.origin.x >= outer.origin.x - CONTAINMENT_EPSILON
         && inner.origin.y >= outer.origin.y - CONTAINMENT_EPSILON
@@ -203,5 +225,54 @@ mod tests {
             Rect::new(0.0, 0.0, 1440.0, 875.0),
         );
         assert!(!invalid.is_consistent());
+    }
+
+    #[test]
+    fn menu_bar_strip_is_the_top_inset_band() {
+        let with_menu = display(
+            1,
+            true,
+            Rect::new(0.0, 0.0, 1440.0, 900.0),
+            Rect::new(0.0, 25.0, 1440.0, 875.0),
+        );
+        assert_eq!(
+            menu_bar_strip(&with_menu),
+            Some(Rect::new(0.0, 0.0, 1440.0, 25.0))
+        );
+    }
+
+    #[test]
+    fn menu_bar_strip_uses_full_bounds_width() {
+        // Side and bottom insets (dock at the bottom, margins) must not
+        // shrink the strip.
+        let display = display(
+            1,
+            true,
+            Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            Rect::new(10.0, 24.0, 1900.0, 1000.0),
+        );
+        assert_eq!(
+            menu_bar_strip(&display),
+            Some(Rect::new(0.0, 0.0, 1920.0, 24.0))
+        );
+    }
+
+    #[test]
+    fn menu_bar_strip_is_none_without_top_inset() {
+        let no_inset = display(
+            2,
+            false,
+            Rect::new(1440.0, 0.0, 1920.0, 1080.0),
+            Rect::new(1440.0, 0.0, 1920.0, 1080.0),
+        );
+        assert_eq!(menu_bar_strip(&no_inset), None);
+
+        let noise = display(
+            3,
+            false,
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+            Rect::new(0.0, 0.25, 100.0, 99.75),
+        );
+        assert_eq!(menu_bar_strip(&noise), None);
     }
 }

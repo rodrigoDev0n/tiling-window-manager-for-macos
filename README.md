@@ -35,7 +35,7 @@ ingeniería y [`specs/`](specs/README.md) para el índice completo.
 | **Múltiples diseños** | Master/Stack, columnas, filas, monocle y quad (2x2). |
 | **Modo mover con imán** | Un atajo activa el modo mover: las flechas llevan la ventana enfocada a la mitad de pantalla elegida y repelen a la ventana de abajo al lado opuesto. |
 | **Pantalla completa** | Alterna el fullscreen nativo de macOS de la ventana enfocada. |
-| **Escritorio propio** | Fondo de escritorio desde una carpeta configurable (imagen aleatoria por sesión) o color plano, con los iconos de Finder ocultos por defecto y atajo para mostrarlos/ocultarlos. |
+| **Escritorio propio** | Fondo de escritorio desde una carpeta configurable (imagen aleatoria por sesión) o color plano, con los iconos de Finder y la barra de menús ocultos por defecto y atajo para mostrarlos/ocultarlos. |
 | **Estado por pantalla** | Cada pantalla activa conserva su propio orden de mosaico y configuración de diseño durante la vida del proceso. |
 | **Atajos globales** | Teclas de acceso rápido funcionales y una superposición translúcida de atajos. |
 | **Basado en eventos** | Un bucle en primer plano consume eventos normalizados de ventanas y aplicaciones; sin hilos, temporizadores ni runtime asíncrono. |
@@ -175,7 +175,7 @@ modo que la lista mostrada y las acciones ejecutadas nunca divergen.
 | `⌘⌥M` | Diseño monocle |
 | `⌘⌥Espacio` | Entrar o salir del modo mover |
 | `⌘⌥F` | Pantalla completa de la ventana enfocada |
-| `⌘⌥D` | Mostrar u ocultar los iconos del escritorio |
+| `⌘⌥D` | Mostrar u ocultar los iconos del escritorio y la barra de menús |
 | `⌘⌥←/→/↑/↓` | Mover el foco (o la ventana, en modo mover) |
 | `⌘⌥⇧←/→/↑/↓` | Mover la ventana enfocada |
 
@@ -218,8 +218,14 @@ mosaico; al salir vuelven a ser gestionables.
 Al ejecutar `run`, el gestor dibuja su **propio fondo de escritorio** con una
 ventana borderless por pantalla activa, situada a nivel de escritorio (detrás
 de todas las ventanas normales y por encima de los iconos de Finder). Por
-defecto los iconos del escritorio quedan **ocultos**; `⌘⌥D` alterna su
-visibilidad sin eliminar nunca el fondo del gestor.
+defecto los iconos del escritorio y la **barra de menús** (con sus elementos
+de estado) quedan ocultos; `⌘⌥D` alterna su visibilidad sin eliminar nunca el
+fondo del gestor.
+
+La barra de menús se cubre con una ventana propia por pantalla, del mismo
+fondo que el escritorio, para que la franja superior parezca una extensión
+continua del fondo. Esa ventana absorbe los clics (el menú invisible no es
+clicable) y nunca roba el foco.
 
 La imagen de fondo se elige **al azar por sesión** desde una carpeta
 configurada. La configuración se lee de
@@ -365,6 +371,7 @@ especificación relevante completa antes de implementar.
 | [SPEC-008](specs/008-shortcut-actions.md) | Acciones de atajos | Implementada |
 | [SPEC-009](specs/009-automatic-tiling.md) | Mosaico automático | Implementada |
 | [SPEC-011](specs/011-desktop-wallpaper.md) | Fondo de escritorio y visibilidad del escritorio | Implementada |
+| [SPEC-012](specs/012-menu-bar-hiding.md) | Ocultación de la barra de menús | Borrador |
 
 Consulta [`specs/README.md`](specs/README.md) para notas de numeración y
 sustitución.

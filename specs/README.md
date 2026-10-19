@@ -20,6 +20,7 @@ Development workflow in `AGENTS.md`).
 | [SPEC-008](008-shortcut-actions.md) | Shortcut actions | Implemented |
 | [SPEC-009](009-automatic-tiling.md) | Automatic tiling | Implemented |
 | [SPEC-011](011-desktop-wallpaper.md) | Desktop wallpaper and desktop visibility | Implemented |
+| [SPEC-012](012-menu-bar-hiding.md) | Menu bar hiding | Implemented |
 
 ## Numbering and supersession notes
 

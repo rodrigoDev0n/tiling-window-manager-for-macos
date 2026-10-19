@@ -1,4 +1,4 @@
-//! Desktop background windows (SPEC-011).
+//! Desktop background windows (SPEC-011) and menu-bar covers (SPEC-012).
 //!
 //! One borderless, non-activating `NSWindow` per active display draws the
 //! manager's background (image or flat color) at a desktop window level, so
@@ -10,6 +10,13 @@
 //!   are covered by the manager's background.
 //! - **Shown**: at `kCGDesktopWindowLevel`, below the Finder icon window, so
 //!   the icons render on top of the manager's background.
+//!
+//! While the desktop is hidden, one additional **menu-bar cover** window per
+//! display with a menu-bar strip sits above the menu bar (level 26, above the
+//! menu bar at 24 and status items at 25), painting the same background so
+//! the strip looks like a seamless extension of the wallpaper. Unlike the
+//! desktop windows, the covers absorb mouse clicks (SPEC-012 FR-004) and do
+//! not join fullscreen auxiliary spaces (SPEC-012 §3.5).
 //!
 //! The level values were verified empirically with `CGWindowLevelForKey` and
 //! `CGWindowListCopyWindowInfo` (macOS 15): the Finder icon window sits at
@@ -25,15 +32,15 @@ use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSImage, NSWindow, NSWindowCollectionBehavior, NSWindowLevel,
-    NSWindowStyleMask,
+    NSBackingStoreType, NSColor, NSImage, NSPanel, NSWindow, NSWindowCollectionBehavior,
+    NSWindowLevel, NSWindowStyleMask,
 };
 use objc2_foundation::NSString;
 use objc2_quartz_core::{CALayer, kCAGravityResizeAspectFill};
 
 use crate::app::desktop::{Background, FlatColor};
 use crate::core::coordinates;
-use crate::core::display::Display;
+use crate::core::display::{self, Display};
 
 /// `kCGDesktopWindowLevelKey`: level between the system wallpaper and the
 /// Finder desktop icon window.
@@ -41,6 +48,21 @@ const CG_DESKTOP_WINDOW_LEVEL_KEY: i32 = 2;
 
 /// Level used while the desktop icons are hidden (see module docs).
 const DESKTOP_HIDDEN_LEVEL: NSWindowLevel = -1;
+
+/// Level of the menu-bar covers: above the main menu bar (`kCGMainMenuBarWindowLevel`,
+/// 24) and the status items (`NSStatusWindowLevel`, 25). Verified empirically
+/// with a magenta probe window (SPEC-012 §2.3).
+const MENU_BAR_COVER_LEVEL: NSWindowLevel = 26;
+
+/// Role of a manager-owned background window; determines its level, mouse
+/// behavior, and Space participation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowRole {
+    /// Desktop background behind all normal windows (SPEC-011).
+    Desktop,
+    /// Menu-bar strip cover above the menu bar (SPEC-012).
+    MenuBarCover,
+}
 
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -72,16 +94,19 @@ impl std::fmt::Display for BackgroundError {
 
 impl std::error::Error for BackgroundError {}
 
-/// The manager's desktop background: one window per active display plus the
-/// diagnostics collected while creating them.
+/// The manager's desktop background: one window per active display, optional
+/// menu-bar covers (SPEC-012), and the diagnostics collected while creating
+/// them.
 pub struct DesktopBackground {
     windows: Vec<Retained<NSWindow>>,
+    covers: Vec<Retained<NSWindow>>,
     diagnostics: Vec<String>,
 }
 
 impl DesktopBackground {
     /// Creates the background windows for `displays`, initially in the
-    /// desktop-**hidden** state (SPEC-011 FR-005, FR-007).
+    /// desktop-**hidden** state (SPEC-011 FR-005, FR-007): the covers are
+    /// ordered in so the menu bar is hidden together with the icons.
     ///
     /// A failure affecting one display (invalid bounds, undecodable image)
     /// never prevents the remaining displays from getting a background; it is
@@ -92,6 +117,7 @@ impl DesktopBackground {
         if displays.is_empty() {
             return Ok(Self {
                 windows: Vec::new(),
+                covers: Vec::new(),
                 diagnostics: Vec::new(),
             });
         }
@@ -99,6 +125,7 @@ impl DesktopBackground {
             .ok_or(BackgroundError::InvalidGeometry)?;
 
         let mut windows = Vec::with_capacity(displays.len());
+        let mut covers = Vec::new();
         let mut diagnostics = Vec::new();
         for display in displays {
             let Some(frame) = coordinates::ax_to_appkit(display.bounds, main_height) else {
@@ -110,6 +137,7 @@ impl DesktopBackground {
             };
             if let Some(window) = create_window(
                 mtm,
+                WindowRole::Desktop,
                 frame,
                 display.scale,
                 display.id.0,
@@ -118,10 +146,34 @@ impl DesktopBackground {
             ) {
                 windows.push(window);
             }
+
+            // SPEC-012: cover the menu-bar strip of this display, if any.
+            let Some(strip) = display::menu_bar_strip(display) else {
+                continue;
+            };
+            let Some(strip_frame) = coordinates::ax_to_appkit(strip, main_height) else {
+                diagnostics.push(format!(
+                    "display {}: invalid menu-bar strip; strip not covered",
+                    display.id
+                ));
+                continue;
+            };
+            if let Some(cover) = create_window(
+                mtm,
+                WindowRole::MenuBarCover,
+                strip_frame,
+                display.scale,
+                display.id.0,
+                background,
+                &mut diagnostics,
+            ) {
+                covers.push(cover);
+            }
         }
 
         Ok(Self {
             windows,
+            covers,
             diagnostics,
         })
     }
@@ -137,10 +189,10 @@ impl DesktopBackground {
         !self.windows.is_empty()
     }
 
-    /// Moves every background window to the level matching `visible`:
-    /// `true` shows the Finder desktop icons on top of the background,
-    /// `false` covers them (SPEC-011 FR-007). The background itself never
-    /// changes.
+    /// Applies the visibility state: `true` shows the Finder desktop icons
+    /// (background moves below them, menu-bar covers ordered out), `false`
+    /// covers the icons and the menu bar (SPEC-011 FR-007, SPEC-012 FR-003).
+    /// The painted background itself never changes.
     pub fn set_desktop_visible(&self, visible: bool) {
         let level = if visible {
             desktop_shown_level()
@@ -150,22 +202,30 @@ impl DesktopBackground {
         for window in &self.windows {
             window.setLevel(level);
         }
+        for cover in &self.covers {
+            if visible {
+                cover.orderOut(None);
+            } else {
+                cover.orderFrontRegardless();
+            }
+        }
     }
 }
 
 impl Drop for DesktopBackground {
     fn drop(&mut self) {
-        for window in &self.windows {
+        for window in self.windows.iter().chain(&self.covers) {
             window.orderOut(None);
             window.close();
         }
     }
 }
 
-/// Creates, configures, fills and shows one background window, or returns
-/// `None` (with a diagnostic) when it cannot show a background.
+/// Creates, configures, fills and shows one background or cover window, or
+/// returns `None` (with a diagnostic) when it cannot show a background.
 fn create_window(
     mtm: MainThreadMarker,
+    role: WindowRole,
     frame: crate::core::geometry::Rect,
     scale: f64,
     display_id: u32,
@@ -179,35 +239,74 @@ fn create_window(
         return None;
     }
 
+    let appkit_frame = objc2_foundation::NSRect::new(
+        objc2_foundation::NSPoint::new(frame.origin.x, frame.origin.y),
+        objc2_foundation::NSSize::new(frame.size.width, frame.size.height),
+    );
+
     // SAFETY: the window is immediately wrapped in a `Retained` and the
     // arguments are plain value types validated above.
-    let window = unsafe {
-        NSWindow::initWithContentRect_styleMask_backing_defer(
-            mtm.alloc::<NSWindow>(),
-            objc2_foundation::NSRect::new(
-                objc2_foundation::NSPoint::new(frame.origin.x, frame.origin.y),
-                objc2_foundation::NSSize::new(frame.size.width, frame.size.height),
-            ),
-            NSWindowStyleMask::Borderless,
-            NSBackingStoreType::Buffered,
-            false,
-        )
+    let window = match role {
+        WindowRole::Desktop => {
+            let window = unsafe {
+                NSWindow::initWithContentRect_styleMask_backing_defer(
+                    mtm.alloc::<NSWindow>(),
+                    appkit_frame,
+                    NSWindowStyleMask::Borderless,
+                    NSBackingStoreType::Buffered,
+                    false,
+                )
+            };
+            // SAFETY: the window is owned by the `Retained` held in `Self`;
+            // disabling released-when-closed keeps the Rust owner as the sole
+            // lifetime owner.
+            unsafe { window.setReleasedWhenClosed(false) };
+            window
+        }
+        WindowRole::MenuBarCover => {
+            // A non-activating panel receives the clicks that would
+            // otherwise hit the invisible menu bar, without activating the
+            // manager (SPEC-012 FR-004; same pattern as the overlay).
+            let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
+                mtm.alloc::<NSPanel>(),
+                appkit_frame,
+                NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
+                NSBackingStoreType::Buffered,
+                false,
+            );
+            // SAFETY: same ownership rationale as the desktop window above.
+            unsafe { panel.setReleasedWhenClosed(false) };
+            panel.into_super()
+        }
     };
 
-    // SAFETY: the window is owned by the `Retained` held in `Self`; disabling
-    // released-when-closed keeps the Rust owner as the sole lifetime owner.
-    unsafe { window.setReleasedWhenClosed(false) };
     window.setOpaque(true);
     window.setHasShadow(false);
-    window.setIgnoresMouseEvents(true);
-    window.setLevel(DESKTOP_HIDDEN_LEVEL);
-    // Join every Space (the background is the desktop) and stay out of
-    // Mission Control window thumbnails and Exposé reordering.
-    window.setCollectionBehavior(
-        NSWindowCollectionBehavior::CanJoinAllSpaces
-            | NSWindowCollectionBehavior::Stationary
-            | NSWindowCollectionBehavior::FullScreenAuxiliary,
-    );
+    match role {
+        WindowRole::Desktop => {
+            window.setLevel(DESKTOP_HIDDEN_LEVEL);
+            window.setIgnoresMouseEvents(true);
+            // Join every Space (the background is the desktop) and stay out
+            // of Mission Control window thumbnails and Exposé reordering.
+            window.setCollectionBehavior(
+                NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::Stationary
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary,
+            );
+        }
+        WindowRole::MenuBarCover => {
+            window.setLevel(MENU_BAR_COVER_LEVEL);
+            // SPEC-012 FR-004: while the menu bar is invisible it must not
+            // be clickable, so the cover absorbs pointer events.
+            window.setIgnoresMouseEvents(false);
+            // Fullscreen spaces have no menu bar; the cover must never
+            // intrude over a fullscreen application.
+            window.setCollectionBehavior(
+                NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::Stationary,
+            );
+        }
+    }
 
     let fill_color = match background {
         Background::Color(color) => *color,
